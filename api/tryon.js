@@ -11,15 +11,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Create prediction using model endpoint (always uses latest version)
-    const createRes = await fetch("https://api.replicate.com/v1/models/cuuupid/idm-vton/predictions", {
+    // Create prediction with confirmed version hash
+    const createRes = await fetch("https://api.replicate.com/v1/predictions", {
       method: "POST",
       headers: {
-        "Authorization": "Bearer " + apiKey,
+        "Authorization": "Token " + apiKey,
         "Content-Type": "application/json",
-        "Prefer": "wait",
       },
       body: JSON.stringify({
+        version: "0aee68c6e6753e4722d362678c927ff91e2e5a7fe7312dc87fb5b2ccc35b277d",
         input: {
           human_img: personImg,
           garm_img: clothingImg,
@@ -33,10 +33,13 @@ export default async function handler(req, res) {
     });
 
     if (!createRes.ok) {
-      const errData = await createRes.json().catch(() => ({}));
-      return res.status(createRes.status).json({
-        error: errData.detail || `Replicate API error: ${createRes.status}`,
-      });
+      const errText = await createRes.text().catch(() => "");
+      let errMsg = `Replicate API error ${createRes.status}`;
+      try {
+        const errData = JSON.parse(errText);
+        errMsg = errData.detail || errData.title || errMsg;
+      } catch { errMsg += ": " + errText.slice(0, 200); }
+      return res.status(createRes.status).json({ error: errMsg });
     }
 
     let prediction = await createRes.json();
@@ -46,7 +49,7 @@ export default async function handler(req, res) {
       await new Promise((r) => setTimeout(r, 3000));
       const pollRes = await fetch(
         `https://api.replicate.com/v1/predictions/${prediction.id}`,
-        { headers: { "Authorization": "Bearer " + apiKey } }
+        { headers: { "Authorization": "Token " + apiKey } }
       );
       if (!pollRes.ok) {
         return res.status(pollRes.status).json({ error: `Polling error: ${pollRes.status}` });
