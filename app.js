@@ -202,7 +202,11 @@
         }),
       });
 
-      const mannequinData = await mannequinRes.json();
+      const mannequinText = await mannequinRes.text();
+      let mannequinData;
+      try { mannequinData = JSON.parse(mannequinText); } catch {
+        throw new Error("Server error: " + mannequinText.slice(0, 200));
+      }
       if (!mannequinRes.ok) throw new Error(mannequinData.error || "Mannequin generation failed");
       if (!mannequinData.mannequinUrl) throw new Error("No mannequin image returned");
 
@@ -221,7 +225,11 @@
         }),
       });
 
-      const tryonData = await tryonRes.json();
+      const tryonText = await tryonRes.text();
+      let tryonData;
+      try { tryonData = JSON.parse(tryonText); } catch {
+        throw new Error("Server error: " + tryonText.slice(0, 200));
+      }
       if (!tryonRes.ok) throw new Error(tryonData.error || "Try-on generation failed");
       if (!tryonData.outputs || tryonData.outputs.length === 0) throw new Error("No results returned");
 

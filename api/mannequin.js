@@ -87,7 +87,11 @@ export default async function handler(req, res) {
           error: `Polling error ${pollRes.status}: ${pollText.slice(0, 300)}`,
         });
       }
-      const pollData = await pollRes.json();
+      const pollText = await pollRes.text();
+      let pollData;
+      try { pollData = JSON.parse(pollText); } catch {
+        return res.status(500).json({ error: "Invalid poll response: " + pollText.slice(0, 300) });
+      }
       status = pollData.status;
     }
 
