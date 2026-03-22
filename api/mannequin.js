@@ -18,7 +18,6 @@ export default async function handler(req, res) {
   const build = bodyType || "average";
   const g = gender || "person";
 
-  // Build a descriptive prompt for a neutral full-body mannequin pose
   const buildDesc = {
     slim: "slim, lean build",
     average: "average, natural build",
@@ -30,14 +29,13 @@ export default async function handler(req, res) {
 
   const prompt = `Full body studio photograph of a ${g}, ${buildDesc}, approximately ${heightCm}cm tall and ${weight} lbs, standing straight in a relaxed neutral pose facing the camera, wearing minimal plain white form-fitting undergarments, clean plain white studio background, soft even studio lighting, professional fashion photography, head to toe visible, high detail face`;
 
+  const authHeader = { "Authorization": "Key " + apiKey, "Content-Type": "application/json" };
+
   try {
-    // Step 1: Submit to fal.ai PuLID for face-preserving full-body generation
+    // Submit to fal.ai PuLID for face-preserving full-body generation
     const submitRes = await fetch("https://queue.fal.run/fal-ai/pulid", {
       method: "POST",
-      headers: {
-        "Authorization": "Key " + apiKey,
-        "Content-Type": "application/json",
-      },
+      headers: authHeader,
       body: JSON.stringify({
         prompt,
         reference_images: [{ url: faceImg }],
@@ -45,52 +43,79 @@ export default async function handler(req, res) {
         guidance_scale: 1.2,
         image_size: { width: 768, height: 1024 },
         num_images: 1,
-        negative_prompt: "blurry, low quality, deformed, distorted, cropped, text, watermark, logo, clothing, dressed, outfit",
+        negative_prompt: "blurry, low quality, deformed, distorted, cropped, text, watermark, logo",
       }),
     });
 
+    const submitText = await submitRes.text();
+    let submitData;
+    try { submitData = JSON.parse(submitText); } catch {
+      return res.status(500).json({ error: "Invalid response from fal.ai: " + submitText.slice(0, 300) });
+    }
+
     if (!submitRes.ok) {
-      const errText = await submitRes.text().catch(() => "");
-      let errMsg = `fal.ai API error ${submitRes.status}`;
-      try {
-        const errData = JSON.parse(errText);
-        errMsg = errData.detail || errData.message || errMsg;
-      } catch { errMsg += ": " + errText.slice(0, 300); }
+      const errMsg = submitData.detail || submitData.message || `fal.ai error ${submitRes.status}: ${submitText.slice(0, 300)}`;
       return res.status(submitRes.status).json({ error: errMsg });
     }
 
-    const { request_id } = await submitRes.json();
-    const authHeader = { "Authorization": "Key " + apiKey };
+    // fal.ai queue returns request_id for async, or images directly for sync
+    // Check if result came back immediately
+    if (submitData.images?.[0]?.url || submitData.image?.url) {
+      const url = submitData.images?.[0]?.url || submitData.image?.url;
+      return res.status(200).json({ mannequinUrl: url });
+    }
+
+    const requestId = submitData.request_id;
+    if (!requestId) {
+      return res.status(500).json({
+        error: "No request_id returned from fal.ai. Response: " + JSON.stringify(submitData).slice(0, 300),
+      });
+    }
 
     // Poll for completion
-    const statusUrl = `https://queue.fal.run/fal-ai/pulid/requests/${request_id}/status`;
-    const resultUrl = `https://queue.fal.run/fal-ai/pulid/requests/${request_id}`;
+    const statusUrl = `https://queue.fal.run/fal-ai/pulid/requests/${requestId}/status`;
+    const resultUrl = `https://queue.fal.run/fal-ai/pulid/requests/${requestId}`;
+    const pollHeaders = { "Authorization": "Key " + apiKey };
 
     let status = "IN_QUEUE";
     while (status === "IN_QUEUE" || status === "IN_PROGRESS") {
       await new Promise((r) => setTimeout(r, 3000));
-      const pollRes = await fetch(statusUrl, { headers: authHeader });
+      const pollRes = await fetch(statusUrl, { headers: pollHeaders });
       if (!pollRes.ok) {
-        return res.status(pollRes.status).json({ error: `Polling error: ${pollRes.status}` });
+        const pollText = await pollRes.text().catch(() => "");
+        return res.status(pollRes.status).json({
+          error: `Polling error ${pollRes.status}: ${pollText.slice(0, 300)}`,
+        });
       }
       const pollData = await pollRes.json();
       status = pollData.status;
     }
 
     if (status !== "COMPLETED") {
-      return res.status(500).json({ error: "Mannequin generation failed: " + status });
+      return res.status(500).json({ error: "Mannequin generation failed with status: " + status });
     }
 
-    const resultRes = await fetch(resultUrl, { headers: authHeader });
+    // Fetch the completed result
+    const resultRes = await fetch(resultUrl, { headers: pollHeaders });
+    const resultText = await resultRes.text();
+
     if (!resultRes.ok) {
-      return res.status(resultRes.status).json({ error: "Failed to fetch mannequin result" });
+      return res.status(resultRes.status).json({
+        error: `Failed to fetch result (${resultRes.status}): ${resultText.slice(0, 300)}`,
+      });
     }
 
-    const result = await resultRes.json();
+    let result;
+    try { result = JSON.parse(resultText); } catch {
+      return res.status(500).json({ error: "Invalid result JSON: " + resultText.slice(0, 300) });
+    }
+
     const outputUrl = result.images?.[0]?.url || result.image?.url;
 
     if (!outputUrl) {
-      return res.status(500).json({ error: "No mannequin image returned" });
+      return res.status(500).json({
+        error: "No image in result. Keys returned: " + Object.keys(result).join(", "),
+      });
     }
 
     return res.status(200).json({ mannequinUrl: outputUrl });
