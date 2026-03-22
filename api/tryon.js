@@ -11,15 +11,15 @@ export default async function handler(req, res) {
   }
 
   try {
-    // Create prediction
-    const createRes = await fetch("https://api.replicate.com/v1/predictions", {
+    // Create prediction using model endpoint (always uses latest version)
+    const createRes = await fetch("https://api.replicate.com/v1/models/cuuupid/idm-vton/predictions", {
       method: "POST",
       headers: {
         "Authorization": "Bearer " + apiKey,
         "Content-Type": "application/json",
+        "Prefer": "wait",
       },
       body: JSON.stringify({
-        version: "c871bb9b046607b680f36f97bc76e0a5e6a3b25288b5d4e4eb8f41ef37fa4bab",
         input: {
           human_img: personImg,
           garm_img: clothingImg,
