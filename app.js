@@ -1,5 +1,5 @@
 // ============================================================
-// Virtual Try-On App — AI-Powered via Replicate (IDM-VTON)
+// Virtual Try-On App — AI-Powered via fal.ai (CatVTON)
 // ============================================================
 
 (() => {
@@ -38,7 +38,7 @@
 
   // ---- API Key Management ----
   function getApiKey() {
-    return localStorage.getItem("replicate_api_key") || "";
+    return localStorage.getItem("fal_api_key") || "";
   }
 
   function loadSavedKey() {
@@ -56,7 +56,7 @@
       keyStatus.style.color = "var(--danger)";
       return;
     }
-    localStorage.setItem("replicate_api_key", key);
+    localStorage.setItem("fal_api_key", key);
     keyStatus.textContent = "Saved";
     keyStatus.style.color = "var(--success)";
     updateGenerateState();
