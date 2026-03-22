@@ -156,13 +156,6 @@
     runTryOn();
   });
 
-  // CORS proxy to allow browser-based API calls
-  const PROXY = "https://corsproxy.io/?";
-
-  function proxyFetch(url, options) {
-    return fetch(PROXY + encodeURIComponent(url), options);
-  }
-
   async function runTryOn() {
     // Show loading
     loadingSection.classList.remove("hidden");
@@ -173,57 +166,26 @@
     try {
       const apiKey = getApiKey();
 
-      // Step 1: Create prediction
-      const createRes = await proxyFetch("https://api.replicate.com/v1/predictions", {
+      // Call our serverless API route (avoids CORS issues)
+      const res = await fetch("/api/tryon", {
         method: "POST",
-        headers: {
-          "Authorization": "Bearer " + apiKey,
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          version: "c871bb9b046607b680f36f97bc76e0a5e6a3b25288b5d4e4eb8f41ef37fa4bab",
-          input: {
-            human_img: personDataURL,
-            garm_img: clothingDataURL,
-            garment_des: "clothing item",
-            is_checked: true,
-            is_checked_crop: false,
-            denoise_steps: 30,
-            seed: 42,
-          },
+          apiKey,
+          personImg: personDataURL,
+          clothingImg: clothingDataURL,
         }),
       });
 
-      if (!createRes.ok) {
-        const errData = await createRes.json().catch(() => ({}));
-        throw new Error(errData.detail || `API error: ${createRes.status}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || `API error: ${res.status}`);
       }
 
-      let prediction = await createRes.json();
+      if (!data.output) throw new Error("No output image returned");
 
-      // Step 2: Poll until completed
-      while (prediction.status === "starting" || prediction.status === "processing") {
-        await sleep(3000);
-        const pollRes = await proxyFetch(
-          `https://api.replicate.com/v1/predictions/${prediction.id}`,
-          { headers: { "Authorization": "Bearer " + apiKey } }
-        );
-        if (!pollRes.ok) throw new Error(`Polling error: ${pollRes.status}`);
-        prediction = await pollRes.json();
-      }
-
-      if (prediction.status === "failed") {
-        throw new Error(prediction.error || "Generation failed");
-      }
-
-      // Step 3: Show result
-      const outputUrl = Array.isArray(prediction.output)
-        ? prediction.output[0]
-        : prediction.output;
-
-      if (!outputUrl) throw new Error("No output image returned");
-
-      resultImg.src = outputUrl;
+      resultImg.src = data.output;
       loadingSection.classList.add("hidden");
       resultSection.classList.remove("hidden");
 
