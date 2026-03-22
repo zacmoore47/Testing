@@ -1,4 +1,4 @@
-export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
+export const config = { api: { bodyParser: { sizeLimit: "10mb" } }, maxDuration: 60 };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -32,8 +32,8 @@ export default async function handler(req, res) {
   const authHeader = { "Authorization": "Key " + apiKey, "Content-Type": "application/json" };
 
   try {
-    // Submit to fal.ai PuLID for face-preserving full-body generation
-    const submitRes = await fetch("https://queue.fal.run/fal-ai/pulid", {
+    // Use fal.ai synchronous endpoint (waits for result, no polling needed)
+    const falRes = await fetch("https://fal.run/fal-ai/pulid", {
       method: "POST",
       headers: authHeader,
       body: JSON.stringify({
@@ -47,71 +47,15 @@ export default async function handler(req, res) {
       }),
     });
 
-    const submitText = await submitRes.text();
-    let submitData;
-    try { submitData = JSON.parse(submitText); } catch {
-      return res.status(500).json({ error: "Invalid response from fal.ai: " + submitText.slice(0, 300) });
-    }
-
-    if (!submitRes.ok) {
-      const errMsg = submitData.detail || submitData.message || `fal.ai error ${submitRes.status}: ${submitText.slice(0, 300)}`;
-      return res.status(submitRes.status).json({ error: errMsg });
-    }
-
-    // fal.ai queue returns request_id for async, or images directly for sync
-    // Check if result came back immediately
-    if (submitData.images?.[0]?.url || submitData.image?.url) {
-      const url = submitData.images?.[0]?.url || submitData.image?.url;
-      return res.status(200).json({ mannequinUrl: url });
-    }
-
-    const requestId = submitData.request_id;
-    if (!requestId) {
-      return res.status(500).json({
-        error: "No request_id returned from fal.ai. Response: " + JSON.stringify(submitData).slice(0, 300),
-      });
-    }
-
-    // Poll for completion
-    const statusUrl = `https://queue.fal.run/fal-ai/pulid/requests/${requestId}/status`;
-    const resultUrl = `https://queue.fal.run/fal-ai/pulid/requests/${requestId}`;
-    const pollHeaders = { "Authorization": "Key " + apiKey };
-
-    let status = "IN_QUEUE";
-    while (status === "IN_QUEUE" || status === "IN_PROGRESS") {
-      await new Promise((r) => setTimeout(r, 3000));
-      const pollRes = await fetch(statusUrl, { headers: pollHeaders });
-      if (!pollRes.ok) {
-        const pollText = await pollRes.text().catch(() => "");
-        return res.status(pollRes.status).json({
-          error: `Polling error ${pollRes.status}: ${pollText.slice(0, 300)}`,
-        });
-      }
-      const pollText = await pollRes.text();
-      let pollData;
-      try { pollData = JSON.parse(pollText); } catch {
-        return res.status(500).json({ error: "Invalid poll response: " + pollText.slice(0, 300) });
-      }
-      status = pollData.status;
-    }
-
-    if (status !== "COMPLETED") {
-      return res.status(500).json({ error: "Mannequin generation failed with status: " + status });
-    }
-
-    // Fetch the completed result
-    const resultRes = await fetch(resultUrl, { headers: pollHeaders });
-    const resultText = await resultRes.text();
-
-    if (!resultRes.ok) {
-      return res.status(resultRes.status).json({
-        error: `Failed to fetch result (${resultRes.status}): ${resultText.slice(0, 300)}`,
-      });
-    }
-
+    const falText = await falRes.text();
     let result;
-    try { result = JSON.parse(resultText); } catch {
-      return res.status(500).json({ error: "Invalid result JSON: " + resultText.slice(0, 300) });
+    try { result = JSON.parse(falText); } catch {
+      return res.status(500).json({ error: "Invalid response from fal.ai: " + falText.slice(0, 300) });
+    }
+
+    if (!falRes.ok) {
+      const errMsg = result.detail || result.message || `fal.ai error ${falRes.status}: ${falText.slice(0, 300)}`;
+      return res.status(falRes.status).json({ error: errMsg });
     }
 
     const outputUrl = result.images?.[0]?.url || result.image?.url;
