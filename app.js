@@ -21,12 +21,16 @@
   const clearPersonBtn = $("#clear-person");
   const clearClothingBtn = $("#clear-clothing");
 
+  const clothTypeSelect = $("#cloth-type-select");
+  const numImagesSelect = $("#num-images-select");
+
   const generateBtn   = $("#generate-btn");
   const generateHint  = $("#generate-hint");
   const loadingSection = $("#loading-section");
   const resultSection  = $("#result-section");
-  const resultImg      = $("#result-img");
+  const resultGallery  = $("#result-gallery");
   const downloadBtn    = $("#download-btn");
+  const downloadAllBtn = $("#download-all-btn");
   const tryAgainBtn    = $("#try-again-btn");
   const errorSection   = $("#error-section");
   const errorText      = $("#error-text");
@@ -35,6 +39,8 @@
   // ---- State ----
   let personDataURL = null;
   let clothingDataURL = null;
+  let resultImages = [];   // Array of output URLs
+  let selectedIndex = 0;   // Currently selected image in gallery
 
   // ---- API Key Management ----
   function getApiKey() {
@@ -67,7 +73,7 @@
     return new Promise((resolve) => {
       const img = new Image();
       img.onload = () => {
-        const MAX = 1024;
+        const MAX = 1536;
         let w = img.width, h = img.height;
         if (w > MAX || h > MAX) {
           const scale = MAX / Math.max(w, h);
@@ -78,7 +84,7 @@
         canvas.width = w;
         canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", 0.8));
+        resolve(canvas.toDataURL("image/png"));
       };
       img.src = URL.createObjectURL(file);
     });
@@ -151,7 +157,7 @@
     generateBtn.disabled = !ready;
 
     if (!getApiKey()) {
-      generateHint.textContent = "Enter your Replicate API key above";
+      generateHint.textContent = "Enter your fal.ai API key above";
     } else if (!personDataURL && !clothingDataURL) {
       generateHint.textContent = "Upload both images to enable generation";
     } else if (!personDataURL) {
@@ -178,8 +184,9 @@
 
     try {
       const apiKey = getApiKey();
+      const clothType = clothTypeSelect.value;
+      const numImages = parseInt(numImagesSelect.value);
 
-      // Call our serverless API route (avoids CORS issues)
       const res = await fetch("/api/tryon", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -187,6 +194,8 @@
           apiKey,
           personImg: personDataURL,
           clothingImg: clothingDataURL,
+          clothType,
+          numImages,
         }),
       });
 
@@ -196,9 +205,12 @@
         throw new Error(data.error || `API error: ${res.status}`);
       }
 
-      if (!data.output) throw new Error("No output image returned");
+      if (!data.outputs || data.outputs.length === 0) throw new Error("No output images returned");
 
-      resultImg.src = data.output;
+      resultImages = data.outputs;
+      selectedIndex = 0;
+      renderGallery();
+
       loadingSection.classList.add("hidden");
       resultSection.classList.remove("hidden");
 
@@ -211,21 +223,62 @@
     }
   }
 
-  function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+  // ---- Gallery rendering ----
+  function renderGallery() {
+    resultGallery.innerHTML = "";
+
+    resultImages.forEach((url, i) => {
+      const item = document.createElement("div");
+      item.className = "gallery-item" + (i === selectedIndex ? " selected" : "");
+      item.addEventListener("click", () => {
+        selectedIndex = i;
+        updateGallerySelection();
+      });
+
+      const img = document.createElement("img");
+      img.src = url;
+      img.alt = `Try-on result ${i + 1}`;
+
+      const badge = document.createElement("span");
+      badge.className = "gallery-badge";
+      badge.textContent = i + 1;
+
+      item.appendChild(img);
+      item.appendChild(badge);
+      resultGallery.appendChild(item);
+    });
+  }
+
+  function updateGallerySelection() {
+    const items = resultGallery.querySelectorAll(".gallery-item");
+    items.forEach((item, i) => {
+      item.classList.toggle("selected", i === selectedIndex);
+    });
   }
 
   // ---- Download result ----
   downloadBtn.addEventListener("click", () => {
+    if (!resultImages[selectedIndex]) return;
     const link = document.createElement("a");
-    link.download = "virtual-tryon-result.png";
-    link.href = resultImg.src;
+    link.download = `virtual-tryon-result-${selectedIndex + 1}.png`;
+    link.href = resultImages[selectedIndex];
     link.click();
+  });
+
+  downloadAllBtn.addEventListener("click", () => {
+    resultImages.forEach((url, i) => {
+      const link = document.createElement("a");
+      link.download = `virtual-tryon-result-${i + 1}.png`;
+      link.href = url;
+      link.click();
+    });
   });
 
   // ---- Try again ----
   tryAgainBtn.addEventListener("click", () => {
     resultSection.classList.add("hidden");
+    resultImages = [];
+    selectedIndex = 0;
   });
 
   // ---- Dismiss error ----

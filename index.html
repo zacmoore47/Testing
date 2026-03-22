@@ -59,6 +59,27 @@
         </div>
       </div>
 
+      <!-- Options Row -->
+      <div class="options-row">
+        <div class="option-group">
+          <label for="cloth-type-select">Clothing Type</label>
+          <select id="cloth-type-select">
+            <option value="overall">Full Outfit</option>
+            <option value="upper_body">Upper Body (Tops, Jackets)</option>
+            <option value="lower_body">Lower Body (Pants, Skirts)</option>
+          </select>
+        </div>
+        <div class="option-group">
+          <label for="num-images-select">Number of Results</label>
+          <select id="num-images-select">
+            <option value="1">1 Image</option>
+            <option value="2">2 Images</option>
+            <option value="3">3 Images</option>
+            <option value="4" selected>4 Images</option>
+          </select>
+        </div>
+      </div>
+
       <!-- Generate Button -->
       <div class="generate-section">
         <button class="btn btn-primary btn-lg" id="generate-btn" disabled>
@@ -74,14 +95,14 @@
       <div class="loading-section hidden" id="loading-section">
         <div class="spinner"></div>
         <p class="loading-text">Generating your virtual try-on...</p>
-        <p class="loading-subtext">This typically takes 30-60 seconds</p>
+        <p class="loading-subtext">This typically takes 30-60 seconds per image</p>
       </div>
 
       <!-- Result Section -->
       <div class="result-section hidden" id="result-section">
-        <h2>Result</h2>
-        <div class="result-container">
-          <img id="result-img" alt="Try-on result">
+        <h2>Results</h2>
+        <div class="result-gallery" id="result-gallery">
+          <!-- Images injected by JS -->
         </div>
         <div class="result-actions">
           <button class="btn btn-primary" id="download-btn">
@@ -90,8 +111,9 @@
               <polyline points="7 10 12 15 17 10"/>
               <line x1="12" y1="15" x2="12" y2="3"/>
             </svg>
-            Download Result
+            Download Selected
           </button>
+          <button class="btn btn-secondary" id="download-all-btn">Download All</button>
           <button class="btn btn-secondary" id="try-again-btn">Try Another</button>
         </div>
       </div>
