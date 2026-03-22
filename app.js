@@ -156,6 +156,13 @@
     runTryOn();
   });
 
+  // CORS proxy to allow browser-based API calls
+  const PROXY = "https://corsproxy.io/?";
+
+  function proxyFetch(url, options) {
+    return fetch(PROXY + encodeURIComponent(url), options);
+  }
+
   async function runTryOn() {
     // Show loading
     loadingSection.classList.remove("hidden");
@@ -167,12 +174,11 @@
       const apiKey = getApiKey();
 
       // Step 1: Create prediction
-      const createRes = await fetch("https://api.replicate.com/v1/predictions", {
+      const createRes = await proxyFetch("https://api.replicate.com/v1/predictions", {
         method: "POST",
         headers: {
           "Authorization": "Bearer " + apiKey,
           "Content-Type": "application/json",
-          "Prefer": "wait",
         },
         body: JSON.stringify({
           version: "c871bb9b046607b680f36f97bc76e0a5e6a3b25288b5d4e4eb8f41ef37fa4bab",
@@ -195,11 +201,10 @@
 
       let prediction = await createRes.json();
 
-      // Step 2: Poll if not completed yet (the "Prefer: wait" header should handle this,
-      // but fall back to polling just in case)
+      // Step 2: Poll until completed
       while (prediction.status === "starting" || prediction.status === "processing") {
-        await sleep(2000);
-        const pollRes = await fetch(
+        await sleep(3000);
+        const pollRes = await proxyFetch(
           `https://api.replicate.com/v1/predictions/${prediction.id}`,
           { headers: { "Authorization": "Bearer " + apiKey } }
         );
