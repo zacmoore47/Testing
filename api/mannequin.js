@@ -38,7 +38,7 @@ export default async function handler(req, res) {
       headers: authHeader,
       body: JSON.stringify({
         prompt,
-        reference_images: [{ url: faceImg }],
+        reference_images: [{ image_url: faceImg }],
         num_inference_steps: 4,
         guidance_scale: 1.2,
         image_size: { width: 768, height: 1024 },
