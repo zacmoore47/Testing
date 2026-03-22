@@ -1,3 +1,31 @@
+export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
+
+async function uploadToFalCDN(dataUri, apiKey) {
+  // Convert data URI to binary
+  const match = dataUri.match(/^data:(.+?);base64,(.+)$/);
+  if (!match) throw new Error("Invalid image data");
+  const mimeType = match[1];
+  const buffer = Buffer.from(match[2], "base64");
+  const ext = mimeType === "image/png" ? "png" : "jpeg";
+
+  const uploadRes = await fetch("https://fal.ai/api/fal/storage/upload", {
+    method: "PUT",
+    headers: {
+      "Authorization": "Key " + apiKey,
+      "Content-Type": mimeType,
+    },
+    body: buffer,
+  });
+
+  if (!uploadRes.ok) {
+    const errText = await uploadRes.text().catch(() => "");
+    throw new Error("Upload failed (" + uploadRes.status + "): " + errText.slice(0, 200));
+  }
+
+  const data = await uploadRes.json();
+  return data.access_url || data.url;
+}
+
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Method not allowed" });
@@ -10,6 +38,12 @@ export default async function handler(req, res) {
   }
 
   try {
+    // Upload images to fal CDN to get proper URLs
+    const [personUrl, clothingUrl] = await Promise.all([
+      uploadToFalCDN(personImg, apiKey),
+      uploadToFalCDN(clothingImg, apiKey),
+    ]);
+
     // Submit to fal.ai CatVTON queue
     const submitRes = await fetch("https://queue.fal.run/fal-ai/cat-vton", {
       method: "POST",
@@ -18,8 +52,8 @@ export default async function handler(req, res) {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        human_image_url: personImg,
-        garment_image_url: clothingImg,
+        human_image_url: personUrl,
+        garment_image_url: clothingUrl,
         cloth_type: "overall",
       }),
     });
