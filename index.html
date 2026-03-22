@@ -8,114 +8,100 @@
 </head>
 <body>
   <div id="app">
-    <!-- Landing / Upload Screen -->
-    <div id="landing" class="screen active">
-      <div class="landing-content">
-        <h1>Virtual Try-On</h1>
-        <p class="subtitle">See how clothes look on you before you buy</p>
+    <header class="app-header">
+      <h1>Virtual Try-On</h1>
+      <p class="tagline">Upload a photo of a person and a clothing item — AI generates the try-on result</p>
+    </header>
 
-        <div class="upload-section">
-          <h2>Step 1: Add Your Photo</h2>
-          <div class="upload-options">
-            <label class="upload-btn primary" for="selfie-upload">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Upload Photo
-            </label>
-            <input type="file" id="selfie-upload" accept="image/*" hidden>
-
-            <button class="upload-btn secondary" id="webcam-btn">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
-              Use Webcam
-            </button>
-          </div>
-        </div>
-
-        <!-- Webcam capture modal -->
-        <div id="webcam-modal" class="modal hidden">
-          <div class="modal-content">
-            <video id="webcam-video" autoplay playsinline></video>
-            <div class="webcam-controls">
-              <button id="capture-btn" class="upload-btn primary">Capture</button>
-              <button id="cancel-webcam-btn" class="upload-btn secondary">Cancel</button>
-            </div>
-          </div>
-        </div>
-      </div>
+    <!-- API Key Section -->
+    <div class="api-key-bar" id="api-key-bar">
+      <label for="api-key-input">Replicate API Key:</label>
+      <input type="password" id="api-key-input" placeholder="r8_xxxxxxxxxxxxxxxxxxxxxxxx">
+      <button class="btn btn-sm" id="save-key-btn">Save</button>
+      <span class="key-status" id="key-status"></span>
+      <a href="https://replicate.com/account/api-tokens" target="_blank" class="key-link">Get a key</a>
     </div>
 
-    <!-- Editor Screen -->
-    <div id="editor" class="screen">
-      <div class="editor-layout">
-        <!-- Sidebar -->
-        <aside class="sidebar">
-          <div class="sidebar-header">
-            <h2>Clothing Items</h2>
+    <main class="main-content">
+      <!-- Upload Cards -->
+      <div class="upload-row">
+        <!-- Person Photo -->
+        <div class="upload-card" id="person-card">
+          <div class="upload-preview" id="person-preview">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+              <circle cx="12" cy="7" r="4"/>
+            </svg>
+            <span>Upload Person Photo</span>
           </div>
+          <img id="person-img" class="preview-img hidden" alt="Person photo">
+          <label class="upload-overlay" for="person-upload">
+            <span>Click or drag to upload</span>
+          </label>
+          <input type="file" id="person-upload" accept="image/*" hidden>
+          <button class="clear-btn hidden" id="clear-person" title="Remove">&times;</button>
+        </div>
 
-          <div class="clothing-upload-area">
-            <label class="clothing-upload-btn" for="clothing-upload" id="clothing-drop-zone">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
-              <span>Add Clothing</span>
-              <small>Upload, drag &amp; drop, or paste from clipboard</small>
-            </label>
-            <input type="file" id="clothing-upload" accept="image/*" multiple hidden>
-
-            <label class="clothing-upload-btn url-btn" id="url-upload-btn">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
-              <span>Paste Image URL</span>
-            </label>
+        <!-- Clothing Photo -->
+        <div class="upload-card" id="clothing-card">
+          <div class="upload-preview" id="clothing-preview">
+            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M6 2l3 2.5L12 2l3 2.5L18 2v6l-2 1v13H8V9L6 8V2z"/>
+            </svg>
+            <span>Upload Clothing Photo</span>
           </div>
-
-          <div id="url-input-area" class="hidden">
-            <input type="text" id="url-input" placeholder="https://example.com/shirt.png">
-            <button id="url-submit" class="upload-btn primary small">Add</button>
-          </div>
-
-          <div id="clothing-list" class="clothing-list"></div>
-
-          <div class="sidebar-footer">
-            <button id="back-btn" class="upload-btn secondary small">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
-              New Photo
-            </button>
-            <button id="download-btn" class="upload-btn primary small">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-              Save Image
-            </button>
-          </div>
-        </aside>
-
-        <!-- Canvas Area -->
-        <main class="canvas-area">
-          <div class="toolbar">
-            <div class="tool-group" id="item-tools" style="display:none;">
-              <span class="tool-label" id="selected-label">Selected: --</span>
-              <button class="tool-btn" id="flip-h-btn" title="Flip Horizontal">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="7 3 7 21"/><path d="M21 12H11l5-5"/><path d="M11 12l5 5"/></svg>
-                Flip H
-              </button>
-              <button class="tool-btn" id="flip-v-btn" title="Flip Vertical">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 7 21 7"/><path d="M12 21V11l-5 5"/><path d="M12 11l5 5"/></svg>
-                Flip V
-              </button>
-              <button class="tool-btn" id="bring-front-btn" title="Bring to Front">Front</button>
-              <button class="tool-btn" id="send-back-btn" title="Send to Back">Back</button>
-              <input type="range" id="opacity-slider" min="20" max="100" value="100" title="Opacity">
-              <button class="tool-btn danger" id="delete-btn" title="Delete Item">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
-                Delete
-              </button>
-            </div>
-            <div class="tool-group hint" id="hint-text">
-              Click on a clothing item to select and edit it. Drag to move, scroll to resize, Shift+scroll to rotate.
-            </div>
-          </div>
-          <div id="canvas-container">
-            <canvas id="tryonCanvas"></canvas>
-          </div>
-        </main>
+          <img id="clothing-img" class="preview-img hidden" alt="Clothing photo">
+          <label class="upload-overlay" for="clothing-upload">
+            <span>Click or drag to upload</span>
+          </label>
+          <input type="file" id="clothing-upload" accept="image/*" hidden>
+          <button class="clear-btn hidden" id="clear-clothing" title="Remove">&times;</button>
+        </div>
       </div>
-    </div>
+
+      <!-- Generate Button -->
+      <div class="generate-section">
+        <button class="btn btn-primary btn-lg" id="generate-btn" disabled>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+          </svg>
+          Generate Try-On
+        </button>
+        <p class="generate-hint" id="generate-hint">Upload both images to enable generation</p>
+      </div>
+
+      <!-- Loading State -->
+      <div class="loading-section hidden" id="loading-section">
+        <div class="spinner"></div>
+        <p class="loading-text">Generating your virtual try-on...</p>
+        <p class="loading-subtext">This typically takes 30-60 seconds</p>
+      </div>
+
+      <!-- Result Section -->
+      <div class="result-section hidden" id="result-section">
+        <h2>Result</h2>
+        <div class="result-container">
+          <img id="result-img" alt="Try-on result">
+        </div>
+        <div class="result-actions">
+          <button class="btn btn-primary" id="download-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7 10 12 15 17 10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            Download Result
+          </button>
+          <button class="btn btn-secondary" id="try-again-btn">Try Another</button>
+        </div>
+      </div>
+
+      <!-- Error State -->
+      <div class="error-section hidden" id="error-section">
+        <p class="error-text" id="error-text"></p>
+        <button class="btn btn-secondary" id="dismiss-error-btn">Dismiss</button>
+      </div>
+    </main>
   </div>
 
   <script src="app.js"></script>

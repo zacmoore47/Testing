@@ -1,71 +1,68 @@
 // ============================================================
-// Virtual Try-On App
+// Virtual Try-On App — AI-Powered via Replicate (IDM-VTON)
 // ============================================================
 
 (() => {
   "use strict";
 
-  // ---- State ----
-  const state = {
-    selfieImg: null,       // HTMLImageElement of user photo
-    items: [],             // { id, img, x, y, w, h, rot, flipH, flipV, opacity, visible, name }
-    selectedId: null,
-    dragging: false,
-    dragOffX: 0,
-    dragOffY: 0,
-    nextId: 1,
-    canvasScale: 1,        // ratio of display size to internal size
-  };
-
   // ---- DOM refs ----
   const $ = (sel) => document.querySelector(sel);
-  const landing   = $("#landing");
-  const editor    = $("#editor");
-  const canvas    = $("#tryonCanvas");
-  const ctx       = canvas.getContext("2d");
-  const container = $("#canvas-container");
 
-  // Landing
-  const selfieUpload  = $("#selfie-upload");
-  const webcamBtn     = $("#webcam-btn");
-  const webcamModal   = $("#webcam-modal");
-  const webcamVideo   = $("#webcam-video");
-  const captureBtn    = $("#capture-btn");
-  const cancelWebcam  = $("#cancel-webcam-btn");
+  const apiKeyInput   = $("#api-key-input");
+  const saveKeyBtn    = $("#save-key-btn");
+  const keyStatus     = $("#key-status");
 
-  // Sidebar
+  const personUpload   = $("#person-upload");
   const clothingUpload = $("#clothing-upload");
-  const clothingDrop   = $("#clothing-drop-zone");
-  const urlUploadBtn   = $("#url-upload-btn");
-  const urlInputArea   = $("#url-input-area");
-  const urlInput       = $("#url-input");
-  const urlSubmit      = $("#url-submit");
-  const clothingList   = $("#clothing-list");
+  const personCard     = $("#person-card");
+  const clothingCard   = $("#clothing-card");
+  const personImg      = $("#person-img");
+  const clothingImg    = $("#clothing-img");
+  const clearPersonBtn = $("#clear-person");
+  const clearClothingBtn = $("#clear-clothing");
 
-  // Toolbar
-  const itemTools    = $("#item-tools");
-  const hintText     = $("#hint-text");
-  const selectedLabel = $("#selected-label");
-  const flipHBtn     = $("#flip-h-btn");
-  const flipVBtn     = $("#flip-v-btn");
-  const bringFront   = $("#bring-front-btn");
-  const sendBack     = $("#send-back-btn");
-  const opacitySlider = $("#opacity-slider");
-  const deleteBtn    = $("#delete-btn");
-  const downloadBtn  = $("#download-btn");
-  const backBtn      = $("#back-btn");
+  const generateBtn   = $("#generate-btn");
+  const generateHint  = $("#generate-hint");
+  const loadingSection = $("#loading-section");
+  const resultSection  = $("#result-section");
+  const resultImg      = $("#result-img");
+  const downloadBtn    = $("#download-btn");
+  const tryAgainBtn    = $("#try-again-btn");
+  const errorSection   = $("#error-section");
+  const errorText      = $("#error-text");
+  const dismissErrorBtn = $("#dismiss-error-btn");
 
-  // ---- Helpers ----
-  function loadImage(src) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => resolve(img);
-      img.onerror = () => reject(new Error("Failed to load image"));
-      img.src = src;
-    });
+  // ---- State ----
+  let personDataURL = null;
+  let clothingDataURL = null;
+
+  // ---- API Key Management ----
+  function getApiKey() {
+    return localStorage.getItem("replicate_api_key") || "";
   }
 
+  function loadSavedKey() {
+    const key = getApiKey();
+    if (key) {
+      apiKeyInput.value = key;
+      keyStatus.textContent = "Saved";
+    }
+  }
+
+  saveKeyBtn.addEventListener("click", () => {
+    const key = apiKeyInput.value.trim();
+    if (!key) {
+      keyStatus.textContent = "Enter a key";
+      keyStatus.style.color = "var(--danger)";
+      return;
+    }
+    localStorage.setItem("replicate_api_key", key);
+    keyStatus.textContent = "Saved";
+    keyStatus.style.color = "var(--success)";
+    updateGenerateState();
+  });
+
+  // ---- File helpers ----
   function fileToDataURL(file) {
     return new Promise((resolve) => {
       const reader = new FileReader();
@@ -74,602 +71,189 @@
     });
   }
 
-  function getSelected() {
-    return state.items.find((i) => i.id === state.selectedId) || null;
-  }
-
-  // Convert mouse event to canvas-internal coords
-  function toCanvasCoords(e) {
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: (e.clientX - rect.left) / state.canvasScale,
-      y: (e.clientY - rect.top) / state.canvasScale,
-    };
-  }
-
-  // Hit test: check if point is inside a (possibly rotated) item
-  function hitTest(item, px, py) {
-    // Transform point into item-local coords
-    const cx = item.x + item.w / 2;
-    const cy = item.y + item.h / 2;
-    const rad = (-item.rot * Math.PI) / 180;
-    const dx = px - cx;
-    const dy = py - cy;
-    const lx = dx * Math.cos(rad) - dy * Math.sin(rad);
-    const ly = dx * Math.sin(rad) + dy * Math.cos(rad);
-    return (
-      Math.abs(lx) <= item.w / 2 &&
-      Math.abs(ly) <= item.h / 2
-    );
-  }
-
-  // ---- Rendering ----
-  function render() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Draw selfie
-    if (state.selfieImg) {
-      ctx.drawImage(state.selfieImg, 0, 0, canvas.width, canvas.height);
-    }
-
-    // Draw clothing items
-    for (const item of state.items) {
-      if (!item.visible) continue;
-      ctx.save();
-      ctx.globalAlpha = item.opacity;
-      const cx = item.x + item.w / 2;
-      const cy = item.y + item.h / 2;
-      ctx.translate(cx, cy);
-      ctx.rotate((item.rot * Math.PI) / 180);
-      ctx.scale(item.flipH ? -1 : 1, item.flipV ? -1 : 1);
-      ctx.drawImage(item.img, -item.w / 2, -item.h / 2, item.w, item.h);
-
-      // Selection outline
-      if (item.id === state.selectedId) {
-        ctx.strokeStyle = "#6c5ce7";
-        ctx.lineWidth = 3;
-        ctx.setLineDash([8, 4]);
-        ctx.strokeRect(-item.w / 2, -item.h / 2, item.w, item.h);
-        ctx.setLineDash([]);
-
-        // Corner handles
-        const hs = 8;
-        ctx.fillStyle = "#6c5ce7";
-        for (const [hx, hy] of [
-          [-item.w / 2, -item.h / 2],
-          [item.w / 2, -item.h / 2],
-          [-item.w / 2, item.h / 2],
-          [item.w / 2, item.h / 2],
-        ]) {
-          ctx.fillRect(hx - hs / 2, hy - hs / 2, hs, hs);
-        }
-      }
-      ctx.restore();
-    }
-  }
-
-  function resizeCanvas() {
-    if (!state.selfieImg) return;
-    const imgW = state.selfieImg.naturalWidth;
-    const imgH = state.selfieImg.naturalHeight;
-    canvas.width = imgW;
-    canvas.height = imgH;
-
-    // Fit to container
-    const cw = container.clientWidth;
-    const ch = container.clientHeight;
-    const scale = Math.min(cw / imgW, ch / imgH, 1);
-    canvas.style.width = imgW * scale + "px";
-    canvas.style.height = imgH * scale + "px";
-    state.canvasScale = scale;
-    render();
-  }
-
-  // ---- Sidebar list ----
-  function refreshSidebar() {
-    clothingList.innerHTML = "";
-    for (const item of state.items) {
-      const div = document.createElement("div");
-      div.className = "clothing-item" + (item.id === state.selectedId ? " selected" : "");
-      div.innerHTML = `
-        <img src="${item.img.src}" alt="${item.name}">
-        <div class="item-info">
-          <div class="item-name">${item.name}</div>
-          <div class="item-meta">Opacity: ${Math.round(item.opacity * 100)}%</div>
-        </div>
-        <button class="item-visibility" title="Toggle visibility">${item.visible ? "👁" : "🚫"}</button>
-      `;
-      div.addEventListener("click", (e) => {
-        if (e.target.closest(".item-visibility")) {
-          item.visible = !item.visible;
-          refreshSidebar();
-          render();
-          return;
-        }
-        selectItem(item.id);
-      });
-      clothingList.appendChild(div);
-    }
-    updateToolbar();
-  }
-
-  function updateToolbar() {
-    const sel = getSelected();
-    if (sel) {
-      itemTools.style.display = "flex";
-      hintText.style.display = "none";
-      selectedLabel.textContent = "Selected: " + sel.name;
-      opacitySlider.value = sel.opacity * 100;
-    } else {
-      itemTools.style.display = "none";
-      hintText.style.display = "flex";
-    }
-  }
-
-  function selectItem(id) {
-    state.selectedId = id;
-    refreshSidebar();
-    render();
-  }
-
-  // ---- Add clothing item ----
-  async function addClothingImage(imgSrc, name) {
-    try {
-      const img = await loadImage(imgSrc);
-      // Size clothing to ~40% of canvas width initially
-      const targetW = canvas.width * 0.4;
-      const scale = targetW / img.naturalWidth;
-      const w = img.naturalWidth * scale;
-      const h = img.naturalHeight * scale;
-
-      const item = {
-        id: state.nextId++,
-        img,
-        x: (canvas.width - w) / 2,
-        y: (canvas.height - h) / 2,
-        w,
-        h,
-        rot: 0,
-        flipH: false,
-        flipV: false,
-        opacity: 1,
-        visible: true,
-        name: name || "Item " + (state.items.length + 1),
-      };
-      state.items.push(item);
-      selectItem(item.id);
-    } catch (err) {
-      alert("Could not load image: " + err.message);
-    }
-  }
-
-  // ---- Screen transitions ----
-  function showEditor() {
-    landing.classList.remove("active");
-    editor.classList.add("active");
-    resizeCanvas();
-  }
-
-  function showLanding() {
-    editor.classList.remove("active");
-    landing.classList.add("active");
-    state.selfieImg = null;
-    state.items = [];
-    state.selectedId = null;
-    state.nextId = 1;
-    clothingList.innerHTML = "";
-  }
-
-  // ---- Selfie upload ----
-  selfieUpload.addEventListener("change", async (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const url = await fileToDataURL(file);
-    state.selfieImg = await loadImage(url);
-    showEditor();
-    selfieUpload.value = "";
-  });
-
-  // ---- Webcam ----
-  let webcamStream = null;
-
-  webcamBtn.addEventListener("click", async () => {
-    try {
-      webcamStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user", width: { ideal: 1280 } } });
-      webcamVideo.srcObject = webcamStream;
-      webcamModal.classList.remove("hidden");
-    } catch {
-      alert("Could not access webcam. Please upload a photo instead.");
-    }
-  });
-
-  captureBtn.addEventListener("click", () => {
-    const tempCanvas = document.createElement("canvas");
-    tempCanvas.width = webcamVideo.videoWidth;
-    tempCanvas.height = webcamVideo.videoHeight;
-    const tCtx = tempCanvas.getContext("2d");
-    // Mirror the capture to match the preview
-    tCtx.translate(tempCanvas.width, 0);
-    tCtx.scale(-1, 1);
-    tCtx.drawImage(webcamVideo, 0, 0);
-    stopWebcam();
-    const url = tempCanvas.toDataURL("image/jpeg", 0.92);
-    loadImage(url).then((img) => {
-      state.selfieImg = img;
-      showEditor();
-    });
-  });
-
-  cancelWebcam.addEventListener("click", stopWebcam);
-
-  function stopWebcam() {
-    if (webcamStream) {
-      webcamStream.getTracks().forEach((t) => t.stop());
-      webcamStream = null;
-    }
-    webcamVideo.srcObject = null;
-    webcamModal.classList.add("hidden");
-  }
-
-  // ---- Clothing upload ----
-  clothingUpload.addEventListener("change", async (e) => {
-    for (const file of e.target.files) {
+  // ---- Upload handling ----
+  function setupUploadCard(card, fileInput, imgEl, clearBtn, onLoaded) {
+    fileInput.addEventListener("change", async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
       const url = await fileToDataURL(file);
-      await addClothingImage(url, file.name.replace(/\.[^.]+$/, ""));
-    }
-    clothingUpload.value = "";
-  });
+      showPreview(card, imgEl, clearBtn, url);
+      onLoaded(url);
+      fileInput.value = "";
+    });
 
-  // Drag & drop on drop zone
-  clothingDrop.addEventListener("dragover", (e) => {
-    e.preventDefault();
-    clothingDrop.classList.add("drag-over");
-  });
-  clothingDrop.addEventListener("dragleave", () => {
-    clothingDrop.classList.remove("drag-over");
-  });
-  clothingDrop.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    clothingDrop.classList.remove("drag-over");
-    // Check for image URL from dragged web images
-    const html = e.dataTransfer.getData("text/html");
-    const urlText = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-
-    if (e.dataTransfer.files.length) {
-      for (const file of e.dataTransfer.files) {
-        if (!file.type.startsWith("image/")) continue;
+    // Drag & drop
+    card.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      card.classList.add("drag-over");
+    });
+    card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+    card.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      card.classList.remove("drag-over");
+      if (e.dataTransfer.files.length) {
+        const file = e.dataTransfer.files[0];
+        if (!file.type.startsWith("image/")) return;
         const url = await fileToDataURL(file);
-        await addClothingImage(url, file.name.replace(/\.[^.]+$/, ""));
+        showPreview(card, imgEl, clearBtn, url);
+        onLoaded(url);
       }
-    } else if (html) {
-      // Extract img src from dragged HTML
-      const match = html.match(/<img[^>]+src="([^"]+)"/i);
-      if (match) await addClothingImage(match[1], "Dragged Image");
-    } else if (urlText && /^https?:\/\/.+/i.test(urlText)) {
-      await addClothingImage(urlText, "Linked Image");
-    }
+    });
+
+    // Clear
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      hidePreview(card, imgEl, clearBtn);
+      onLoaded(null);
+    });
+  }
+
+  function showPreview(card, imgEl, clearBtn, url) {
+    imgEl.src = url;
+    imgEl.classList.remove("hidden");
+    clearBtn.classList.remove("hidden");
+    card.classList.add("has-image");
+    updateGenerateState();
+  }
+
+  function hidePreview(card, imgEl, clearBtn) {
+    imgEl.src = "";
+    imgEl.classList.add("hidden");
+    clearBtn.classList.add("hidden");
+    card.classList.remove("has-image");
+    updateGenerateState();
+  }
+
+  setupUploadCard(personCard, personUpload, personImg, clearPersonBtn, (url) => {
+    personDataURL = url;
   });
 
-  // Paste from clipboard (global)
-  document.addEventListener("paste", async (e) => {
-    if (!editor.classList.contains("active")) return;
-    // Check for pasted images
-    for (const item of e.clipboardData.items) {
-      if (item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        const url = await fileToDataURL(file);
-        await addClothingImage(url, "Pasted Image");
-        return;
-      }
-    }
-    // Check for pasted URL text
-    const text = e.clipboardData.getData("text/plain");
-    if (text && /^https?:\/\/.+\.(png|jpe?g|gif|webp|svg)/i.test(text.trim())) {
-      await addClothingImage(text.trim(), "Pasted URL");
-    }
+  setupUploadCard(clothingCard, clothingUpload, clothingImg, clearClothingBtn, (url) => {
+    clothingDataURL = url;
   });
 
-  // URL input
-  urlUploadBtn.addEventListener("click", () => {
-    urlInputArea.classList.toggle("hidden");
-    if (!urlInputArea.classList.contains("hidden")) urlInput.focus();
-  });
+  // ---- Generate button state ----
+  function updateGenerateState() {
+    const ready = personDataURL && clothingDataURL && getApiKey();
+    generateBtn.disabled = !ready;
 
-  urlSubmit.addEventListener("click", async () => {
-    const url = urlInput.value.trim();
-    if (!url) return;
-    await addClothingImage(url, "Web Image");
-    urlInput.value = "";
-    urlInputArea.classList.add("hidden");
-  });
-
-  urlInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") urlSubmit.click();
-  });
-
-  // ---- Canvas interactions ----
-
-  // Click to select / deselect
-  canvas.addEventListener("mousedown", (e) => {
-    const { x, y } = toCanvasCoords(e);
-    // Check items in reverse order (top-most first)
-    let found = null;
-    for (let i = state.items.length - 1; i >= 0; i--) {
-      const item = state.items[i];
-      if (item.visible && hitTest(item, x, y)) {
-        found = item;
-        break;
-      }
-    }
-    if (found) {
-      selectItem(found.id);
-      state.dragging = true;
-      state.dragOffX = x - found.x;
-      state.dragOffY = y - found.y;
-      canvas.style.cursor = "grabbing";
+    if (!getApiKey()) {
+      generateHint.textContent = "Enter your Replicate API key above";
+    } else if (!personDataURL && !clothingDataURL) {
+      generateHint.textContent = "Upload both images to enable generation";
+    } else if (!personDataURL) {
+      generateHint.textContent = "Upload a person photo";
+    } else if (!clothingDataURL) {
+      generateHint.textContent = "Upload a clothing photo";
     } else {
-      selectItem(null);
+      generateHint.textContent = "Ready to generate!";
     }
+  }
+
+  // ---- Generate try-on ----
+  generateBtn.addEventListener("click", () => {
+    if (!personDataURL || !clothingDataURL || !getApiKey()) return;
+    runTryOn();
   });
 
-  canvas.addEventListener("mousemove", (e) => {
-    if (!state.dragging) return;
-    const sel = getSelected();
-    if (!sel) return;
-    const { x, y } = toCanvasCoords(e);
-    sel.x = x - state.dragOffX;
-    sel.y = y - state.dragOffY;
-    render();
-  });
+  async function runTryOn() {
+    // Show loading
+    loadingSection.classList.remove("hidden");
+    resultSection.classList.add("hidden");
+    errorSection.classList.add("hidden");
+    generateBtn.disabled = true;
 
-  canvas.addEventListener("mouseup", () => {
-    state.dragging = false;
-    canvas.style.cursor = "default";
-  });
+    try {
+      const apiKey = getApiKey();
 
-  canvas.addEventListener("mouseleave", () => {
-    state.dragging = false;
-    canvas.style.cursor = "default";
-  });
+      // Step 1: Create prediction
+      const createRes = await fetch("https://api.replicate.com/v1/predictions", {
+        method: "POST",
+        headers: {
+          "Authorization": "Bearer " + apiKey,
+          "Content-Type": "application/json",
+          "Prefer": "wait",
+        },
+        body: JSON.stringify({
+          version: "c871bb9b046607b680f36f97bc76e0a5e6a3b25288b5d4e4eb8f41ef37fa4bab",
+          input: {
+            human_img: personDataURL,
+            garm_img: clothingDataURL,
+            garment_des: "clothing item",
+            is_checked: true,
+            is_checked_crop: false,
+            denoise_steps: 30,
+            seed: 42,
+          },
+        }),
+      });
 
-  // Scroll to resize, Shift+scroll to rotate
-  canvas.addEventListener("wheel", (e) => {
-    const sel = getSelected();
-    if (!sel) return;
-    e.preventDefault();
-
-    if (e.shiftKey) {
-      // Rotate
-      sel.rot += e.deltaY > 0 ? 5 : -5;
-    } else {
-      // Resize (maintain aspect ratio)
-      const factor = e.deltaY > 0 ? 0.95 : 1.05;
-      const oldW = sel.w;
-      const oldH = sel.h;
-      sel.w *= factor;
-      sel.h *= factor;
-      // Keep centered
-      sel.x -= (sel.w - oldW) / 2;
-      sel.y -= (sel.h - oldH) / 2;
-    }
-    render();
-    refreshSidebar();
-  }, { passive: false });
-
-  // Touch support for mobile
-  let lastTouchDist = 0;
-  let lastTouchAngle = 0;
-  let touchStartX = 0;
-  let touchStartY = 0;
-
-  canvas.addEventListener("touchstart", (e) => {
-    if (e.touches.length === 1) {
-      const touch = e.touches[0];
-      const { x, y } = toCanvasCoords(touch);
-      let found = null;
-      for (let i = state.items.length - 1; i >= 0; i--) {
-        const item = state.items[i];
-        if (item.visible && hitTest(item, x, y)) {
-          found = item;
-          break;
-        }
+      if (!createRes.ok) {
+        const errData = await createRes.json().catch(() => ({}));
+        throw new Error(errData.detail || `API error: ${createRes.status}`);
       }
-      if (found) {
-        selectItem(found.id);
-        state.dragging = true;
-        state.dragOffX = x - found.x;
-        state.dragOffY = y - found.y;
-        e.preventDefault();
-      } else {
-        selectItem(null);
+
+      let prediction = await createRes.json();
+
+      // Step 2: Poll if not completed yet (the "Prefer: wait" header should handle this,
+      // but fall back to polling just in case)
+      while (prediction.status === "starting" || prediction.status === "processing") {
+        await sleep(2000);
+        const pollRes = await fetch(
+          `https://api.replicate.com/v1/predictions/${prediction.id}`,
+          { headers: { "Authorization": "Bearer " + apiKey } }
+        );
+        if (!pollRes.ok) throw new Error(`Polling error: ${pollRes.status}`);
+        prediction = await pollRes.json();
       }
+
+      if (prediction.status === "failed") {
+        throw new Error(prediction.error || "Generation failed");
+      }
+
+      // Step 3: Show result
+      const outputUrl = Array.isArray(prediction.output)
+        ? prediction.output[0]
+        : prediction.output;
+
+      if (!outputUrl) throw new Error("No output image returned");
+
+      resultImg.src = outputUrl;
+      loadingSection.classList.add("hidden");
+      resultSection.classList.remove("hidden");
+
+    } catch (err) {
+      loadingSection.classList.add("hidden");
+      errorSection.classList.remove("hidden");
+      errorText.textContent = err.message;
+    } finally {
+      updateGenerateState();
     }
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      lastTouchDist = Math.sqrt(dx * dx + dy * dy);
-      lastTouchAngle = Math.atan2(dy, dx);
-      e.preventDefault();
-    }
-  }, { passive: false });
+  }
 
-  canvas.addEventListener("touchmove", (e) => {
-    const sel = getSelected();
-    if (!sel) return;
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
 
-    if (e.touches.length === 1 && state.dragging) {
-      const touch = e.touches[0];
-      const { x, y } = toCanvasCoords(touch);
-      sel.x = x - state.dragOffX;
-      sel.y = y - state.dragOffY;
-      render();
-      e.preventDefault();
-    }
-
-    if (e.touches.length === 2) {
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      const angle = Math.atan2(dy, dx);
-
-      // Pinch to resize
-      const scaleFactor = dist / lastTouchDist;
-      const oldW = sel.w;
-      const oldH = sel.h;
-      sel.w *= scaleFactor;
-      sel.h *= scaleFactor;
-      sel.x -= (sel.w - oldW) / 2;
-      sel.y -= (sel.h - oldH) / 2;
-
-      // Two-finger rotate
-      const angleDiff = ((angle - lastTouchAngle) * 180) / Math.PI;
-      sel.rot += angleDiff;
-
-      lastTouchDist = dist;
-      lastTouchAngle = angle;
-      render();
-      refreshSidebar();
-      e.preventDefault();
-    }
-  }, { passive: false });
-
-  canvas.addEventListener("touchend", () => {
-    state.dragging = false;
-  });
-
-  // ---- Toolbar actions ----
-  flipHBtn.addEventListener("click", () => {
-    const sel = getSelected();
-    if (sel) { sel.flipH = !sel.flipH; render(); }
-  });
-
-  flipVBtn.addEventListener("click", () => {
-    const sel = getSelected();
-    if (sel) { sel.flipV = !sel.flipV; render(); }
-  });
-
-  bringFront.addEventListener("click", () => {
-    const sel = getSelected();
-    if (!sel) return;
-    state.items = state.items.filter((i) => i !== sel);
-    state.items.push(sel);
-    refreshSidebar();
-    render();
-  });
-
-  sendBack.addEventListener("click", () => {
-    const sel = getSelected();
-    if (!sel) return;
-    state.items = state.items.filter((i) => i !== sel);
-    state.items.unshift(sel);
-    refreshSidebar();
-    render();
-  });
-
-  opacitySlider.addEventListener("input", () => {
-    const sel = getSelected();
-    if (sel) {
-      sel.opacity = opacitySlider.value / 100;
-      render();
-      refreshSidebar();
-    }
-  });
-
-  deleteBtn.addEventListener("click", () => {
-    const sel = getSelected();
-    if (!sel) return;
-    state.items = state.items.filter((i) => i !== sel);
-    state.selectedId = null;
-    refreshSidebar();
-    render();
-  });
-
-  // Keyboard shortcuts
-  document.addEventListener("keydown", (e) => {
-    if (!editor.classList.contains("active")) return;
-    if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-
-    const sel = getSelected();
-    if (!sel) return;
-
-    const step = e.shiftKey ? 10 : 2;
-
-    switch (e.key) {
-      case "Delete":
-      case "Backspace":
-        deleteBtn.click();
-        break;
-      case "ArrowLeft":
-        sel.x -= step;
-        render();
-        e.preventDefault();
-        break;
-      case "ArrowRight":
-        sel.x += step;
-        render();
-        e.preventDefault();
-        break;
-      case "ArrowUp":
-        sel.y -= step;
-        render();
-        e.preventDefault();
-        break;
-      case "ArrowDown":
-        sel.y += step;
-        render();
-        e.preventDefault();
-        break;
-      case "[":
-        sel.rot -= 5;
-        render();
-        break;
-      case "]":
-        sel.rot += 5;
-        render();
-        break;
-    }
-  });
-
-  // ---- Download ----
+  // ---- Download result ----
   downloadBtn.addEventListener("click", () => {
-    // Deselect to hide outline
-    const prevSel = state.selectedId;
-    state.selectedId = null;
-    render();
-
     const link = document.createElement("a");
-    link.download = "virtual-tryon.png";
-    link.href = canvas.toDataURL("image/png");
+    link.download = "virtual-tryon-result.png";
+    link.href = resultImg.src;
     link.click();
-
-    state.selectedId = prevSel;
-    render();
   });
 
-  // ---- Back button ----
-  backBtn.addEventListener("click", showLanding);
-
-  // ---- Resize handling ----
-  window.addEventListener("resize", resizeCanvas);
-
-  // ---- Allow drop on canvas too ----
-  container.addEventListener("dragover", (e) => e.preventDefault());
-  container.addEventListener("drop", async (e) => {
-    e.preventDefault();
-    const html = e.dataTransfer.getData("text/html");
-    const urlText = e.dataTransfer.getData("text/uri-list") || e.dataTransfer.getData("text/plain");
-
-    if (e.dataTransfer.files.length) {
-      for (const file of e.dataTransfer.files) {
-        if (!file.type.startsWith("image/")) continue;
-        const url = await fileToDataURL(file);
-        await addClothingImage(url, file.name.replace(/\.[^.]+$/, ""));
-      }
-    } else if (html) {
-      const match = html.match(/<img[^>]+src="([^"]+)"/i);
-      if (match) await addClothingImage(match[1], "Dragged Image");
-    } else if (urlText && /^https?:\/\/.+/i.test(urlText)) {
-      await addClothingImage(urlText, "Linked Image");
-    }
+  // ---- Try again ----
+  tryAgainBtn.addEventListener("click", () => {
+    resultSection.classList.add("hidden");
   });
+
+  // ---- Dismiss error ----
+  dismissErrorBtn.addEventListener("click", () => {
+    errorSection.classList.add("hidden");
+  });
+
+  // ---- Init ----
+  loadSavedKey();
+  updateGenerateState();
 })();
