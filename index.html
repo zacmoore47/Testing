@@ -5,124 +5,170 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Virtual Try-On</title>
   <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
   <div id="app">
-    <header class="app-header">
+
+    <!-- Header -->
+    <header class="header">
       <h1>Virtual Try-On</h1>
-      <p class="tagline">Upload a photo of a person and a clothing item — AI generates the try-on result</p>
+      <p>See how any outfit looks on you</p>
     </header>
 
-    <!-- API Key Section -->
-    <div class="api-key-bar" id="api-key-bar">
-      <label for="api-key-input">fal.ai API Key:</label>
-      <input type="password" id="api-key-input" placeholder="your-fal-ai-key">
-      <button class="btn btn-sm" id="save-key-btn">Save</button>
+    <!-- API Key (compact) -->
+    <div class="key-bar">
+      <input type="password" id="api-key-input" placeholder="fal.ai API key">
+      <button id="save-key-btn">Save</button>
       <span class="key-status" id="key-status"></span>
-      <a href="https://fal.ai/dashboard/keys" target="_blank" class="key-link">Get a key</a>
+      <a href="https://fal.ai/dashboard/keys" target="_blank">Get a key</a>
     </div>
 
-    <main class="main-content">
-      <!-- Upload Cards -->
-      <div class="upload-row">
-        <!-- Person Photo -->
-        <div class="upload-card" id="person-card">
-          <div class="upload-preview" id="person-preview">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
-              <circle cx="12" cy="7" r="4"/>
+    <!-- Steps -->
+    <main class="steps">
+
+      <!-- Step 1: Face -->
+      <section class="step">
+        <div class="step-label"><span class="step-num">1</span> Your face</div>
+        <div class="face-upload" id="face-card">
+          <img id="face-img" class="face-preview hidden" alt="Face">
+          <div class="face-placeholder" id="face-placeholder">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <circle cx="12" cy="8" r="4"/><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
             </svg>
-            <span>Upload Person Photo</span>
+            <span>Upload a photo of your face</span>
           </div>
-          <img id="person-img" class="preview-img hidden" alt="Person photo">
-          <label class="upload-overlay" for="person-upload">
-            <span>Click or drag to upload</span>
-          </label>
-          <input type="file" id="person-upload" accept="image/*" hidden>
-          <button class="clear-btn hidden" id="clear-person" title="Remove">&times;</button>
+          <input type="file" id="face-upload" accept="image/*" hidden>
+          <button class="remove-btn hidden" id="clear-face">&times;</button>
         </div>
+      </section>
 
-        <!-- Clothing Photo -->
-        <div class="upload-card" id="clothing-card">
-          <div class="upload-preview" id="clothing-preview">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M6 2l3 2.5L12 2l3 2.5L18 2v6l-2 1v13H8V9L6 8V2z"/>
-            </svg>
-            <span>Upload Clothing Photo</span>
+      <!-- Step 2: Body measurements -->
+      <section class="step">
+        <div class="step-label"><span class="step-num">2</span> Body details</div>
+        <div class="body-form">
+          <div class="field-row">
+            <div class="field">
+              <label for="gender-select">I am</label>
+              <select id="gender-select">
+                <option value="man">Male</option>
+                <option value="woman">Female</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="body-type-select">Build</label>
+              <select id="body-type-select">
+                <option value="slim">Slim</option>
+                <option value="average" selected>Average</option>
+                <option value="athletic">Athletic</option>
+                <option value="muscular">Muscular</option>
+                <option value="curvy">Curvy</option>
+                <option value="plus-size">Plus-size</option>
+              </select>
+            </div>
           </div>
-          <img id="clothing-img" class="preview-img hidden" alt="Clothing photo">
-          <label class="upload-overlay" for="clothing-upload">
-            <span>Click or drag to upload</span>
-          </label>
-          <input type="file" id="clothing-upload" accept="image/*" hidden>
-          <button class="clear-btn hidden" id="clear-clothing" title="Remove">&times;</button>
+          <div class="field-row">
+            <div class="field">
+              <label>Height</label>
+              <div class="height-inputs">
+                <select id="height-ft">
+                  <option value="4">4 ft</option>
+                  <option value="5" selected>5 ft</option>
+                  <option value="6">6 ft</option>
+                  <option value="7">7 ft</option>
+                </select>
+                <select id="height-in">
+                  <option value="0">0 in</option>
+                  <option value="1">1 in</option>
+                  <option value="2">2 in</option>
+                  <option value="3">3 in</option>
+                  <option value="4">4 in</option>
+                  <option value="5">5 in</option>
+                  <option value="6">6 in</option>
+                  <option value="7">7 in</option>
+                  <option value="8" selected>8 in</option>
+                  <option value="9">9 in</option>
+                  <option value="10">10 in</option>
+                  <option value="11">11 in</option>
+                </select>
+              </div>
+            </div>
+            <div class="field">
+              <label for="weight-input">Weight (lbs)</label>
+              <input type="number" id="weight-input" value="150" min="60" max="500">
+            </div>
+          </div>
         </div>
+      </section>
+
+      <!-- Step 3: Clothing -->
+      <section class="step">
+        <div class="step-label"><span class="step-num">3</span> Clothing item</div>
+        <div class="clothing-row">
+          <div class="clothing-upload" id="clothing-card">
+            <img id="clothing-img" class="clothing-preview hidden" alt="Clothing">
+            <div class="clothing-placeholder" id="clothing-placeholder">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M6 2l3 2.5L12 2l3 2.5L18 2v6l-2 1v13H8V9L6 8V2z"/>
+              </svg>
+              <span>Upload clothing photo</span>
+            </div>
+            <input type="file" id="clothing-upload" accept="image/*" hidden>
+            <button class="remove-btn hidden" id="clear-clothing">&times;</button>
+          </div>
+          <div class="clothing-options">
+            <div class="field">
+              <label for="cloth-type-select">Type</label>
+              <select id="cloth-type-select">
+                <option value="overall">Full outfit</option>
+                <option value="upper_body">Top / Jacket</option>
+                <option value="lower_body">Pants / Skirt</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="num-images-select">Variations</label>
+              <select id="num-images-select">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4" selected>4</option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Generate -->
+      <div class="generate-area">
+        <button class="btn-generate" id="generate-btn" disabled>Generate Try-On</button>
+        <p class="hint" id="generate-hint">Upload a face and clothing to start</p>
       </div>
 
-      <!-- Options Row -->
-      <div class="options-row">
-        <div class="option-group">
-          <label for="cloth-type-select">Clothing Type</label>
-          <select id="cloth-type-select">
-            <option value="overall">Full Outfit</option>
-            <option value="upper_body">Upper Body (Tops, Jackets)</option>
-            <option value="lower_body">Lower Body (Pants, Skirts)</option>
-          </select>
-        </div>
-        <div class="option-group">
-          <label for="num-images-select">Number of Results</label>
-          <select id="num-images-select">
-            <option value="1">1 Image</option>
-            <option value="2">2 Images</option>
-            <option value="3">3 Images</option>
-            <option value="4" selected>4 Images</option>
-          </select>
-        </div>
+      <!-- Loading -->
+      <div class="loading hidden" id="loading-section">
+        <div class="loader"></div>
+        <p id="loading-status">Creating your mannequin...</p>
+        <p class="loading-sub">This may take a minute or two</p>
       </div>
 
-      <!-- Generate Button -->
-      <div class="generate-section">
-        <button class="btn btn-primary btn-lg" id="generate-btn" disabled>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-          </svg>
-          Generate Try-On
-        </button>
-        <p class="generate-hint" id="generate-hint">Upload both images to enable generation</p>
-      </div>
-
-      <!-- Loading State -->
-      <div class="loading-section hidden" id="loading-section">
-        <div class="spinner"></div>
-        <p class="loading-text">Generating your virtual try-on...</p>
-        <p class="loading-subtext">This typically takes 30-60 seconds per image</p>
-      </div>
-
-      <!-- Result Section -->
-      <div class="result-section hidden" id="result-section">
-        <h2>Results</h2>
-        <div class="result-gallery" id="result-gallery">
-          <!-- Images injected by JS -->
-        </div>
+      <!-- Results -->
+      <section class="results hidden" id="result-section">
+        <div class="step-label">Results</div>
+        <div class="gallery" id="result-gallery"></div>
         <div class="result-actions">
-          <button class="btn btn-primary" id="download-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Download Selected
-          </button>
-          <button class="btn btn-secondary" id="download-all-btn">Download All</button>
-          <button class="btn btn-secondary" id="try-again-btn">Try Another</button>
+          <button class="btn-primary" id="download-btn">Download selected</button>
+          <button class="btn-secondary" id="download-all-btn">Download all</button>
+          <button class="btn-secondary" id="try-again-btn">Try another</button>
         </div>
+      </section>
+
+      <!-- Error -->
+      <div class="error-box hidden" id="error-section">
+        <p id="error-text"></p>
+        <button class="btn-secondary" id="dismiss-error-btn">Dismiss</button>
       </div>
 
-      <!-- Error State -->
-      <div class="error-section hidden" id="error-section">
-        <p class="error-text" id="error-text"></p>
-        <button class="btn btn-secondary" id="dismiss-error-btn">Dismiss</button>
-      </div>
     </main>
   </div>
 

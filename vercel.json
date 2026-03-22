@@ -1,5 +1,8 @@
 {
   "functions": {
+    "api/mannequin.js": {
+      "maxDuration": 120
+    },
     "api/tryon.js": {
       "maxDuration": 120
     }

@@ -1,48 +1,56 @@
 // ============================================================
-// Virtual Try-On App — AI-Powered via fal.ai (CatVTON)
+// Virtual Try-On — Two-step: Mannequin generation + Clothing
 // ============================================================
-
 (() => {
   "use strict";
 
-  // ---- DOM refs ----
   const $ = (sel) => document.querySelector(sel);
 
-  const apiKeyInput   = $("#api-key-input");
-  const saveKeyBtn    = $("#save-key-btn");
-  const keyStatus     = $("#key-status");
+  // ---- DOM refs ----
+  const apiKeyInput     = $("#api-key-input");
+  const saveKeyBtn      = $("#save-key-btn");
+  const keyStatus       = $("#key-status");
 
-  const personUpload   = $("#person-upload");
-  const clothingUpload = $("#clothing-upload");
-  const personCard     = $("#person-card");
-  const clothingCard   = $("#clothing-card");
-  const personImg      = $("#person-img");
-  const clothingImg    = $("#clothing-img");
-  const clearPersonBtn = $("#clear-person");
+  const faceCard        = $("#face-card");
+  const faceUpload      = $("#face-upload");
+  const faceImg         = $("#face-img");
+  const facePlaceholder = $("#face-placeholder");
+  const clearFaceBtn    = $("#clear-face");
+
+  const genderSelect    = $("#gender-select");
+  const bodyTypeSelect  = $("#body-type-select");
+  const heightFt        = $("#height-ft");
+  const heightIn        = $("#height-in");
+  const weightInput     = $("#weight-input");
+
+  const clothingCard    = $("#clothing-card");
+  const clothingUpload  = $("#clothing-upload");
+  const clothingImg     = $("#clothing-img");
+  const clothPlaceholder = $("#clothing-placeholder");
   const clearClothingBtn = $("#clear-clothing");
-
   const clothTypeSelect = $("#cloth-type-select");
   const numImagesSelect = $("#num-images-select");
 
-  const generateBtn   = $("#generate-btn");
-  const generateHint  = $("#generate-hint");
-  const loadingSection = $("#loading-section");
-  const resultSection  = $("#result-section");
-  const resultGallery  = $("#result-gallery");
-  const downloadBtn    = $("#download-btn");
-  const downloadAllBtn = $("#download-all-btn");
-  const tryAgainBtn    = $("#try-again-btn");
-  const errorSection   = $("#error-section");
-  const errorText      = $("#error-text");
+  const generateBtn     = $("#generate-btn");
+  const generateHint    = $("#generate-hint");
+  const loadingSection  = $("#loading-section");
+  const loadingStatus   = $("#loading-status");
+  const resultSection   = $("#result-section");
+  const resultGallery   = $("#result-gallery");
+  const downloadBtn     = $("#download-btn");
+  const downloadAllBtn  = $("#download-all-btn");
+  const tryAgainBtn     = $("#try-again-btn");
+  const errorSection    = $("#error-section");
+  const errorText       = $("#error-text");
   const dismissErrorBtn = $("#dismiss-error-btn");
 
   // ---- State ----
-  let personDataURL = null;
+  let faceDataURL = null;
   let clothingDataURL = null;
-  let resultImages = [];   // Array of output URLs
-  let selectedIndex = 0;   // Currently selected image in gallery
+  let resultImages = [];
+  let selectedIndex = 0;
 
-  // ---- API Key Management ----
+  // ---- API Key ----
   function getApiKey() {
     return localStorage.getItem("fal_api_key") || "";
   }
@@ -59,16 +67,16 @@
     const key = apiKeyInput.value.trim();
     if (!key) {
       keyStatus.textContent = "Enter a key";
-      keyStatus.style.color = "var(--danger)";
+      keyStatus.style.color = "#c0392b";
       return;
     }
     localStorage.setItem("fal_api_key", key);
     keyStatus.textContent = "Saved";
-    keyStatus.style.color = "var(--success)";
+    keyStatus.style.color = "#27ae60";
     updateGenerateState();
   });
 
-  // ---- File helpers ----
+  // ---- File helper ----
   function fileToDataURL(file) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -80,134 +88,144 @@
           w = Math.round(w * scale);
           h = Math.round(h * scale);
         }
-        const canvas = document.createElement("canvas");
-        canvas.width = w;
-        canvas.height = h;
-        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/png"));
+        const c = document.createElement("canvas");
+        c.width = w;
+        c.height = h;
+        c.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(c.toDataURL("image/png"));
       };
       img.src = URL.createObjectURL(file);
     });
   }
 
-  // ---- Upload handling ----
-  function setupUploadCard(card, fileInput, imgEl, clearBtn, onLoaded) {
+  // ---- Upload cards ----
+  function setupCard(card, fileInput, imgEl, placeholder, clearBtn, onLoad) {
+    card.addEventListener("click", (e) => {
+      if (e.target === clearBtn || clearBtn.contains(e.target)) return;
+      fileInput.click();
+    });
+
     fileInput.addEventListener("change", async (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const url = await fileToDataURL(file);
-      showPreview(card, imgEl, clearBtn, url);
-      onLoaded(url);
+      showImg(imgEl, placeholder, clearBtn, url);
+      onLoad(url);
       fileInput.value = "";
     });
 
-    // Drag & drop
-    card.addEventListener("dragover", (e) => {
-      e.preventDefault();
-      card.classList.add("drag-over");
-    });
-    card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+    card.addEventListener("dragover", (e) => { e.preventDefault(); card.classList.add("drag"); });
+    card.addEventListener("dragleave", () => card.classList.remove("drag"));
     card.addEventListener("drop", async (e) => {
       e.preventDefault();
-      card.classList.remove("drag-over");
-      if (e.dataTransfer.files.length) {
-        const file = e.dataTransfer.files[0];
-        if (!file.type.startsWith("image/")) return;
-        const url = await fileToDataURL(file);
-        showPreview(card, imgEl, clearBtn, url);
-        onLoaded(url);
-      }
+      card.classList.remove("drag");
+      const file = e.dataTransfer.files[0];
+      if (!file || !file.type.startsWith("image/")) return;
+      const url = await fileToDataURL(file);
+      showImg(imgEl, placeholder, clearBtn, url);
+      onLoad(url);
     });
 
-    // Clear
     clearBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      hidePreview(card, imgEl, clearBtn);
-      onLoaded(null);
+      hideImg(imgEl, placeholder, clearBtn);
+      onLoad(null);
     });
   }
 
-  function showPreview(card, imgEl, clearBtn, url) {
+  function showImg(imgEl, placeholder, clearBtn, url) {
     imgEl.src = url;
     imgEl.classList.remove("hidden");
+    placeholder.classList.add("hidden");
     clearBtn.classList.remove("hidden");
-    card.classList.add("has-image");
     updateGenerateState();
   }
 
-  function hidePreview(card, imgEl, clearBtn) {
+  function hideImg(imgEl, placeholder, clearBtn) {
     imgEl.src = "";
     imgEl.classList.add("hidden");
+    placeholder.classList.remove("hidden");
     clearBtn.classList.add("hidden");
-    card.classList.remove("has-image");
     updateGenerateState();
   }
 
-  setupUploadCard(personCard, personUpload, personImg, clearPersonBtn, (url) => {
-    personDataURL = url;
-  });
+  setupCard(faceCard, faceUpload, faceImg, facePlaceholder, clearFaceBtn, (url) => { faceDataURL = url; });
+  setupCard(clothingCard, clothingUpload, clothingImg, clothPlaceholder, clearClothingBtn, (url) => { clothingDataURL = url; });
 
-  setupUploadCard(clothingCard, clothingUpload, clothingImg, clearClothingBtn, (url) => {
-    clothingDataURL = url;
-  });
-
-  // ---- Generate button state ----
+  // ---- Generate state ----
   function updateGenerateState() {
-    const ready = personDataURL && clothingDataURL && getApiKey();
+    const ready = faceDataURL && clothingDataURL && getApiKey();
     generateBtn.disabled = !ready;
 
     if (!getApiKey()) {
       generateHint.textContent = "Enter your fal.ai API key above";
-    } else if (!personDataURL && !clothingDataURL) {
-      generateHint.textContent = "Upload both images to enable generation";
-    } else if (!personDataURL) {
-      generateHint.textContent = "Upload a person photo";
+    } else if (!faceDataURL && !clothingDataURL) {
+      generateHint.textContent = "Upload a face photo and a clothing item";
+    } else if (!faceDataURL) {
+      generateHint.textContent = "Upload a photo of your face";
     } else if (!clothingDataURL) {
-      generateHint.textContent = "Upload a clothing photo";
+      generateHint.textContent = "Upload a clothing item";
     } else {
-      generateHint.textContent = "Ready to generate!";
+      generateHint.textContent = "Ready";
     }
   }
 
-  // ---- Generate try-on ----
+  // ---- Generate ----
   generateBtn.addEventListener("click", () => {
-    if (!personDataURL || !clothingDataURL || !getApiKey()) return;
-    runTryOn();
+    if (generateBtn.disabled) return;
+    runPipeline();
   });
 
-  async function runTryOn() {
-    // Show loading
+  async function runPipeline() {
     loadingSection.classList.remove("hidden");
     resultSection.classList.add("hidden");
     errorSection.classList.add("hidden");
     generateBtn.disabled = true;
 
-    try {
-      const apiKey = getApiKey();
-      const clothType = clothTypeSelect.value;
-      const numImages = parseInt(numImagesSelect.value);
+    const apiKey = getApiKey();
 
-      const res = await fetch("/api/tryon", {
+    try {
+      // Step 1: Generate mannequin from face + body details
+      loadingStatus.textContent = "Creating your mannequin...";
+
+      const mannequinRes = await fetch("/api/mannequin", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apiKey,
-          personImg: personDataURL,
-          clothingImg: clothingDataURL,
-          clothType,
-          numImages,
+          faceImg: faceDataURL,
+          heightFt: heightFt.value,
+          heightIn: heightIn.value,
+          weightLbs: weightInput.value,
+          bodyType: bodyTypeSelect.value,
+          gender: genderSelect.value,
         }),
       });
 
-      const data = await res.json();
+      const mannequinData = await mannequinRes.json();
+      if (!mannequinRes.ok) throw new Error(mannequinData.error || "Mannequin generation failed");
+      if (!mannequinData.mannequinUrl) throw new Error("No mannequin image returned");
 
-      if (!res.ok) {
-        throw new Error(data.error || `API error: ${res.status}`);
-      }
+      // Step 2: Apply clothing to mannequin
+      loadingStatus.textContent = "Applying clothing to your mannequin...";
 
-      if (!data.outputs || data.outputs.length === 0) throw new Error("No output images returned");
+      const tryonRes = await fetch("/api/tryon", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          apiKey,
+          mannequinUrl: mannequinData.mannequinUrl,
+          clothingImg: clothingDataURL,
+          clothType: clothTypeSelect.value,
+          numImages: parseInt(numImagesSelect.value),
+        }),
+      });
 
-      resultImages = data.outputs;
+      const tryonData = await tryonRes.json();
+      if (!tryonRes.ok) throw new Error(tryonData.error || "Try-on generation failed");
+      if (!tryonData.outputs || tryonData.outputs.length === 0) throw new Error("No results returned");
+
+      resultImages = tryonData.outputs;
       selectedIndex = 0;
       renderGallery();
 
@@ -223,24 +241,23 @@
     }
   }
 
-  // ---- Gallery rendering ----
+  // ---- Gallery ----
   function renderGallery() {
     resultGallery.innerHTML = "";
-
     resultImages.forEach((url, i) => {
       const item = document.createElement("div");
       item.className = "gallery-item" + (i === selectedIndex ? " selected" : "");
       item.addEventListener("click", () => {
         selectedIndex = i;
-        updateGallerySelection();
+        updateSelection();
       });
 
       const img = document.createElement("img");
       img.src = url;
-      img.alt = `Try-on result ${i + 1}`;
+      img.alt = `Result ${i + 1}`;
 
       const badge = document.createElement("span");
-      badge.className = "gallery-badge";
+      badge.className = "badge";
       badge.textContent = i + 1;
 
       item.appendChild(img);
@@ -249,39 +266,36 @@
     });
   }
 
-  function updateGallerySelection() {
-    const items = resultGallery.querySelectorAll(".gallery-item");
-    items.forEach((item, i) => {
-      item.classList.toggle("selected", i === selectedIndex);
+  function updateSelection() {
+    resultGallery.querySelectorAll(".gallery-item").forEach((el, i) => {
+      el.classList.toggle("selected", i === selectedIndex);
     });
   }
 
-  // ---- Download result ----
+  // ---- Downloads ----
   downloadBtn.addEventListener("click", () => {
     if (!resultImages[selectedIndex]) return;
-    const link = document.createElement("a");
-    link.download = `virtual-tryon-result-${selectedIndex + 1}.png`;
-    link.href = resultImages[selectedIndex];
-    link.click();
+    dl(resultImages[selectedIndex], `tryon-${selectedIndex + 1}.png`);
   });
 
   downloadAllBtn.addEventListener("click", () => {
-    resultImages.forEach((url, i) => {
-      const link = document.createElement("a");
-      link.download = `virtual-tryon-result-${i + 1}.png`;
-      link.href = url;
-      link.click();
-    });
+    resultImages.forEach((url, i) => dl(url, `tryon-${i + 1}.png`));
   });
 
-  // ---- Try again ----
+  function dl(href, name) {
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = name;
+    a.click();
+  }
+
+  // ---- Try again / dismiss ----
   tryAgainBtn.addEventListener("click", () => {
     resultSection.classList.add("hidden");
     resultImages = [];
     selectedIndex = 0;
   });
 
-  // ---- Dismiss error ----
   dismissErrorBtn.addEventListener("click", () => {
     errorSection.classList.add("hidden");
   });
