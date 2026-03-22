@@ -54,7 +54,7 @@ export default async function handler(req, res) {
     }
 
     if (!falRes.ok) {
-      const errMsg = result.detail || result.message || `fal.ai error ${falRes.status}: ${falText.slice(0, 300)}`;
+      const errMsg = (typeof result.detail === "string" ? result.detail : JSON.stringify(result.detail)) || result.message || `fal.ai error ${falRes.status}: ${falText.slice(0, 300)}`;
       return res.status(falRes.status).json({ error: errMsg });
     }
 
