@@ -168,11 +168,6 @@ ws.data_validation(ROW_HAB_FIRST, COL_DAY_FIRST,
                    ROW_HAB_LAST,  COL_DAY_LAST,
                    {"validate": "list", "source": [CHECK, UNCHECK]})
 
-# ── Conditional formatting: ☑ → green ────────────────────────────────────────
-ws.conditional_format(ROW_HAB_FIRST, COL_DAY_FIRST,
-                      ROW_HAB_LAST,  COL_DAY_LAST,
-                      {"type": "cell", "criteria": "==",
-                       "value": f'"{CHECK}"', "format": f_green})
 
 # ── Gap row ───────────────────────────────────────────────────────────────────
 ws.merge_range(ROW_GAP, 0, ROW_GAP, COL_PROG, "",
@@ -205,11 +200,6 @@ ws.data_validation(ROW_TODO_FIRST, COL_TODO_DONE,
                    ROW_TODO_LAST,  COL_TODO_DONE,
                    {"validate": "list", "source": [CHECK, UNCHECK]})
 
-# ── Conditional formatting: to-do ☑ → green ──────────────────────────────────
-ws.conditional_format(ROW_TODO_FIRST, COL_TODO_DONE,
-                      ROW_TODO_LAST,  COL_TODO_DONE,
-                      {"type": "cell", "criteria": "==",
-                       "value": f'"{CHECK}"', "format": f_green})
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 wb.close()
