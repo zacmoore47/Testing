@@ -215,7 +215,7 @@ for idx, (habit, category) in enumerate(HABITS):
     ncell.fill   = fill(row_bg)
     ncell.border = thin_border()
 
-# ── Conditional formatting: X → green ────────────────────────────────────────
+# ── Conditional formatting: any non-blank cell → green ───────────────────────
 green_fill = PatternFill("solid", fgColor=DONE_FILL)
 green_font = Font(bold=True, color=DONE_FONT, size=10)
 
@@ -226,14 +226,8 @@ cf_range = (
 
 ws.conditional_formatting.add(
     cf_range,
-    CellIsRule(operator="notEqual", formula=['"  "'],
-               fill=green_fill, font=green_font)
-)
-# Also catch actual non-blank cells
-ws.conditional_formatting.add(
-    cf_range,
     FormulaRule(
-        formula=[f'{get_column_letter(FIRST_DAY_COL)}{FIRST_DATA_ROW}<>""'],
+        formula=[f'LEN(TRIM({get_column_letter(FIRST_DAY_COL)}{FIRST_DATA_ROW}))>0'],
         fill=green_fill,
         font=green_font,
     )
