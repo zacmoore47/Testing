@@ -40,7 +40,7 @@ TODOS = [
     "To-Do 8",
 ]
 
-CHECK   = "✓"
+CHECK   = "x"
 UNCHECK = "□"
 
 # ── Colours ───────────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ for idx, habit in enumerate(HABITS):
     fl = xl_rowcol_to_cell(row, COL_DAY_FIRST)
     ll = xl_rowcol_to_cell(row, COL_DAY_LAST)
     ws.write_formula(row, COL_PROG,
-                     f'=SUMPRODUCT(EXACT({fl}:{ll},"{CHECK}"))/{DAYS_IN_MONTH}', f_prog)
+                     f'=COUNTIF({fl}:{ll},"{CHECK}")/{DAYS_IN_MONTH}', f_prog)
 
 # ── Data validation: habits grid ──────────────────────────────────────────────
 ws.data_validation(ROW_HAB_FIRST, COL_DAY_FIRST,
