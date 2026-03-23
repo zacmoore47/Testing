@@ -1,290 +1,259 @@
 """
-Generates a monthly Habit Tracker / To-Do List Excel spreadsheet.
-- Rows = habits/tasks
-- Columns = days of the month (1–31)
-- Type an X (or any character) in a day cell to mark it done
-- Conditional formatting turns completed cells green
-- Includes a progress % column and summary stats
+Minimalist Habit Tracker & To-Do List — April 2026
+Black / white / grey colour scheme.
+Type X (or anything) in a cell to mark it done — turns green.
+Habit tracker and To-Do list are separate sections.
 """
 
 import calendar
 import datetime
 from openpyxl import Workbook
-from openpyxl.styles import (
-    PatternFill, Font, Alignment, Border, Side, GradientFill
-)
-from openpyxl.formatting.rule import CellIsRule, FormulaRule
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.formatting.rule import CellIsRule
 from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.datavalidation import DataValidation
 
-# ── Configuration ────────────────────────────────────────────────────────────
-YEAR  = 2026
-MONTH = 4          # Change to desired month (1–12)
-MONTH_NAME = calendar.month_name[MONTH]
+# ── Config ────────────────────────────────────────────────────────────────────
+YEAR          = 2026
+MONTH         = 4
+MONTH_NAME    = calendar.month_name[MONTH]
 DAYS_IN_MONTH = calendar.monthrange(YEAR, MONTH)[1]
 
-# Sample habits / tasks – feel free to edit
 HABITS = [
-    ("Morning Routine", "🌅 Morning"),
-    ("Exercise / Workout", "💪 Health"),
-    ("Drink 8 Glasses of Water", "💧 Health"),
-    ("Read for 30 Minutes", "📚 Learning"),
-    ("Meditate / Mindfulness", "🧘 Wellness"),
-    ("Healthy Eating", "🥗 Health"),
-    ("No Social Media Before 9am", "📵 Focus"),
-    ("Journal / Gratitude", "✍️ Wellness"),
-    ("Work / Study Goals", "🎯 Productivity"),
-    ("Evening Walk / Stretch", "🚶 Health"),
-    ("Sleep by 11pm", "😴 Wellness"),
-    ("-- TO-DO SECTION --", ""),
-    ("Task 1", "📋 To-Do"),
-    ("Task 2", "📋 To-Do"),
-    ("Task 3", "📋 To-Do"),
-    ("Task 4", "📋 To-Do"),
-    ("Task 5", "📋 To-Do"),
+    "Morning Routine",
+    "Exercise / Workout",
+    "Drink 8 Glasses of Water",
+    "Read for 30 Minutes",
+    "Meditate",
+    "Healthy Eating",
+    "Journal / Gratitude",
+    "Work / Study Goals",
+    "No Social Media Before 9am",
+    "Sleep by 11pm",
 ]
 
-# ── Colours ──────────────────────────────────────────────────────────────────
-HEADER_BG      = "1F3864"   # dark navy
-HEADER_FG      = "FFFFFF"
-SUBHEADER_BG   = "2E75B6"   # blue
-SUBHEADER_FG   = "FFFFFF"
-WEEKEND_COL    = "D9E1F2"   # light blue tint for weekend columns
-DONE_FILL      = "70AD47"   # green when marked
-DONE_FONT      = "FFFFFF"
-ALT_ROW        = "F2F2F2"   # light grey alternating rows
-SEPARATOR_BG   = "BDD7EE"   # section divider
-PROGRESS_BG    = "FFF2CC"   # yellow tint for progress col
-CATEGORY_COLORS = {
-    "🌅 Morning":       "FFE699",
-    "💪 Health":        "C6EFCE",
-    "💧 Health":        "C6EFCE",
-    "🥗 Health":        "C6EFCE",
-    "🚶 Health":        "C6EFCE",
-    "📚 Learning":      "DDEBF7",
-    "🧘 Wellness":      "E2EFDA",
-    "😴 Wellness":      "E2EFDA",
-    "✍️ Wellness":      "E2EFDA",
-    "📵 Focus":         "FCE4D6",
-    "🎯 Productivity":  "EDEDED",
-    "📋 To-Do":         "FFF2CC",
-}
+TODOS = [
+    "To-Do 1",
+    "To-Do 2",
+    "To-Do 3",
+    "To-Do 4",
+    "To-Do 5",
+    "To-Do 6",
+    "To-Do 7",
+    "To-Do 8",
+]
 
-# ── Helper styles ─────────────────────────────────────────────────────────────
-def fill(hex_color):
+# ── Colours ───────────────────────────────────────────────────────────────────
+C_BLACK      = "1A1A1A"
+C_DARK_GREY  = "3D3D3D"
+C_MID_GREY   = "6B6B6B"
+C_LIGHT_GREY = "F0F0F0"
+C_WHITE      = "FFFFFF"
+C_WEEKEND    = "E2E2E2"
+C_PROG       = "EBEBEB"
+C_GREEN      = "5FAD41"   # done fill
+C_GREEN_FG   = "FFFFFF"
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+def solid(hex_color):
     return PatternFill("solid", fgColor=hex_color)
 
-def thin_border():
-    s = Side(style="thin", color="CCCCCC")
+def border(color="CCCCCC"):
+    s = Side(style="thin", color=color)
     return Border(left=s, right=s, top=s, bottom=s)
 
-def center(wrap=False):
-    return Alignment(horizontal="center", vertical="center", wrap_text=wrap)
+def align(h="center", v="center", wrap=False, indent=0):
+    return Alignment(horizontal=h, vertical=v, wrap_text=wrap, indent=indent)
 
-def bold_font(color="000000", size=11):
-    return Font(bold=True, color=color, size=size)
+def font(color=C_BLACK, size=10, bold=False, italic=False):
+    return Font(color=color, size=size, bold=bold, italic=italic)
 
-def normal_font(color="000000", size=10):
-    return Font(color=color, size=size)
+# ── Layout constants ──────────────────────────────────────────────────────────
+NAME_COL      = 2                                    # B  — habit / task name
+FIRST_DAY_COL = 3                                    # C  — day 1
+LAST_DAY_COL  = FIRST_DAY_COL + DAYS_IN_MONTH - 1   # AF — day 30
+PROG_COL      = LAST_DAY_COL + 1                     # AG — progress %
+TOTAL_COLS    = PROG_COL
 
-# ── Build workbook ────────────────────────────────────────────────────────────
+HABIT_HDR_ROW  = 3
+FIRST_HAB_ROW  = 4
+LAST_HAB_ROW   = FIRST_HAB_ROW + len(HABITS) - 1
+
+GAP_ROW        = LAST_HAB_ROW + 1                   # blank separator
+TODO_SEP_ROW   = GAP_ROW + 1                        # "TO-DO LIST" banner
+TODO_HDR_ROW   = TODO_SEP_ROW + 1
+FIRST_TODO_ROW = TODO_HDR_ROW + 1
+LAST_TODO_ROW  = FIRST_TODO_ROW + len(TODOS) - 1
+
+# To-do columns (reuse same B column; Done? = C; Notes merged D→PROG_COL)
+TODO_DONE_COL  = FIRST_DAY_COL      # C
+TODO_NOTE_COL  = FIRST_DAY_COL + 1  # D (merged to PROG_COL)
+
+# ── Workbook ──────────────────────────────────────────────────────────────────
 wb = Workbook()
-
-# ── Sheet 1: Monthly Tracker ──────────────────────────────────────────────────
 ws = wb.active
 ws.title = f"{MONTH_NAME} {YEAR}"
 
-FIRST_DATA_ROW = 4          # row where habit rows start
-HABIT_COL      = 2          # column B = habit name
-CATEGORY_COL   = 3          # column C = category
-FIRST_DAY_COL  = 4          # column D = day 1
-LAST_DAY_COL   = FIRST_DAY_COL + DAYS_IN_MONTH - 1
-PROGRESS_COL   = LAST_DAY_COL + 1
-NOTES_COL      = PROGRESS_COL + 1
+# ── Row 1: Title ──────────────────────────────────────────────────────────────
+ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=TOTAL_COLS)
+t = ws.cell(row=1, column=1,
+            value=f"{MONTH_NAME.upper()} {YEAR}  ·  HABIT TRACKER")
+t.font      = font(C_WHITE, 14, bold=True)
+t.fill      = solid(C_BLACK)
+t.alignment = align()
+ws.row_dimensions[1].height = 34
 
-# Row 1: Big title
-ws.merge_cells(start_row=1, start_column=1,
-               end_row=1, end_column=NOTES_COL)
-title_cell = ws.cell(row=1, column=1,
-                     value=f"📅  {MONTH_NAME.upper()} {YEAR}  —  HABIT TRACKER & TO-DO LIST")
-title_cell.font      = Font(bold=True, color=HEADER_FG, size=16)
-title_cell.fill      = fill(HEADER_BG)
-title_cell.alignment = center()
-ws.row_dimensions[1].height = 36
+# ── Row 2: Instruction ────────────────────────────────────────────────────────
+ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=TOTAL_COLS)
+i = ws.cell(row=2, column=1,
+            value="Type  X  in any day cell to mark it complete  —  the cell turns green")
+i.font      = font(C_MID_GREY, 9, italic=True)
+i.fill      = solid(C_LIGHT_GREY)
+i.alignment = align()
+ws.row_dimensions[2].height = 18
 
-# Row 2: instruction
-ws.merge_cells(start_row=2, start_column=1,
-               end_row=2, end_column=NOTES_COL)
-instr = ws.cell(row=2, column=1,
-                value="✅  Type  X  in any day cell to mark it complete  —  cell turns green automatically")
-instr.font      = Font(italic=True, color="595959", size=10)
-instr.fill      = fill("EBF3FB")
-instr.alignment = center()
-ws.row_dimensions[2].height = 20
+# ── Row 3: Habit section column headers ───────────────────────────────────────
+ws.cell(row=HABIT_HDR_ROW, column=1).fill = solid(C_DARK_GREY)   # spacer
 
-# Row 3: column headers
-ws.cell(row=3, column=HABIT_COL, value="Habit / Task").font = bold_font(HEADER_FG)
-ws.cell(row=3, column=HABIT_COL).fill = fill(SUBHEADER_BG)
-ws.cell(row=3, column=HABIT_COL).alignment = center(wrap=True)
-
-ws.cell(row=3, column=CATEGORY_COL, value="Category").font = bold_font(HEADER_FG)
-ws.cell(row=3, column=CATEGORY_COL).fill = fill(SUBHEADER_BG)
-ws.cell(row=3, column=CATEGORY_COL).alignment = center()
+h = ws.cell(row=HABIT_HDR_ROW, column=NAME_COL, value="Habit")
+h.font = font(C_WHITE, 10, bold=True)
+h.fill = solid(C_DARK_GREY)
+h.alignment = align(h="left", indent=1)
 
 for d in range(1, DAYS_IN_MONTH + 1):
-    col = FIRST_DAY_COL + d - 1
-    weekday = datetime.date(YEAR, MONTH, d).strftime("%a")  # Mon, Tue…
-    cell = ws.cell(row=3, column=col, value=f"{d}\n{weekday}")
-    cell.font      = bold_font(HEADER_FG, size=9)
-    cell.alignment = center(wrap=True)
-    is_weekend = datetime.date(YEAR, MONTH, d).weekday() >= 5
-    cell.fill = fill("3A6BBF" if not is_weekend else "5B9BD5")
+    col     = FIRST_DAY_COL + d - 1
+    weekday = datetime.date(YEAR, MONTH, d).strftime("%a")
+    c = ws.cell(row=HABIT_HDR_ROW, column=col, value=f"{d}\n{weekday}")
+    c.font      = font(C_WHITE, 8, bold=True)
+    c.fill      = solid(C_DARK_GREY)
+    c.alignment = align(wrap=True)
 
-ws.cell(row=3, column=PROGRESS_COL, value="Progress\n(%)").font = bold_font(HEADER_FG)
-ws.cell(row=3, column=PROGRESS_COL).fill = fill(SUBHEADER_BG)
-ws.cell(row=3, column=PROGRESS_COL).alignment = center(wrap=True)
-
-ws.cell(row=3, column=NOTES_COL, value="Notes").font = bold_font(HEADER_FG)
-ws.cell(row=3, column=NOTES_COL).fill = fill(SUBHEADER_BG)
-ws.cell(row=3, column=NOTES_COL).alignment = center()
-
-ws.row_dimensions[3].height = 32
+p = ws.cell(row=HABIT_HDR_ROW, column=PROG_COL, value="%")
+p.font      = font(C_WHITE, 10, bold=True)
+p.fill      = solid(C_DARK_GREY)
+p.alignment = align()
+ws.row_dimensions[HABIT_HDR_ROW].height = 30
 
 # ── Habit rows ────────────────────────────────────────────────────────────────
-for idx, (habit, category) in enumerate(HABITS):
-    row = FIRST_DATA_ROW + idx
-    is_separator = habit.startswith("--")
-    alt = (idx % 2 == 1)
+for idx, habit in enumerate(HABITS):
+    row    = FIRST_HAB_ROW + idx
+    row_bg = C_LIGHT_GREY if idx % 2 else C_WHITE
+    ws.row_dimensions[row].height = 20
 
-    if is_separator:
-        # Section divider row
-        ws.merge_cells(start_row=row, start_column=1,
-                       end_row=row, end_column=NOTES_COL)
-        sep = ws.cell(row=row, column=1, value="  📋  TO-DO LIST")
-        sep.font      = bold_font(HEADER_FG, size=11)
-        sep.fill      = fill(SUBHEADER_BG)
-        sep.alignment = Alignment(horizontal="left", vertical="center")
-        ws.row_dimensions[row].height = 24
-        continue
-
-    ws.row_dimensions[row].height = 22
-
-    # Habit name
-    hcell = ws.cell(row=row, column=HABIT_COL, value=habit)
-    hcell.font      = Font(size=10, bold=False)
-    hcell.alignment = Alignment(horizontal="left", vertical="center",
-                                indent=1)
-    row_bg = CATEGORY_COLORS.get(category, ALT_ROW if alt else "FFFFFF")
-    hcell.fill   = fill(row_bg)
-    hcell.border = thin_border()
-
-    # Category
-    ccell = ws.cell(row=row, column=CATEGORY_COL, value=category)
-    ccell.font      = Font(size=9, italic=True, color="595959")
-    ccell.alignment = center()
-    ccell.fill      = fill(row_bg)
-    ccell.border    = thin_border()
-
-    # Day cells (D … D+30)
-    day_range_start = get_column_letter(FIRST_DAY_COL) + str(row)
-    day_range_end   = get_column_letter(LAST_DAY_COL)  + str(row)
+    hc = ws.cell(row=row, column=NAME_COL, value=habit)
+    hc.font      = font(C_BLACK, 10)
+    hc.fill      = solid(row_bg)
+    hc.alignment = align(h="left", indent=1)
+    hc.border    = border()
 
     for d in range(1, DAYS_IN_MONTH + 1):
-        col = FIRST_DAY_COL + d - 1
-        dcell = ws.cell(row=row, column=col, value="")
-        dcell.alignment = center()
+        col        = FIRST_DAY_COL + d - 1
         is_weekend = datetime.date(YEAR, MONTH, d).weekday() >= 5
-        dcell.fill   = fill(WEEKEND_COL if is_weekend else row_bg)
-        dcell.border = thin_border()
+        dc = ws.cell(row=row, column=col)   # intentionally left blank (None)
+        dc.fill      = solid(C_WEEKEND if is_weekend else row_bg)
+        dc.alignment = align()
+        dc.border    = border()
 
-    # Progress formula: =COUNTIF(D{row}:AH{row},"<>")/DAYS_IN_MONTH
-    first_day_letter = get_column_letter(FIRST_DAY_COL)
-    last_day_letter  = get_column_letter(LAST_DAY_COL)
-    pcell = ws.cell(
-        row=row, column=PROGRESS_COL,
-        value=f'=COUNTIF({first_day_letter}{row}:{last_day_letter}{row},"<>")/{DAYS_IN_MONTH}'
+    fl = get_column_letter(FIRST_DAY_COL)
+    ll = get_column_letter(LAST_DAY_COL)
+    pc = ws.cell(
+        row=row, column=PROG_COL,
+        value=f'=COUNTIF({fl}{row}:{ll}{row},"<>")/{DAYS_IN_MONTH}',
     )
-    pcell.number_format = "0%"
-    pcell.alignment     = center()
-    pcell.fill          = fill(PROGRESS_BG)
-    pcell.font          = Font(size=10, bold=True, color="7F6000")
-    pcell.border        = thin_border()
+    pc.number_format = "0%"
+    pc.font      = font(C_DARK_GREY, 9, bold=True)
+    pc.fill      = solid(C_PROG)
+    pc.alignment = align()
+    pc.border    = border()
 
-    # Notes
-    ncell = ws.cell(row=row, column=NOTES_COL, value="")
-    ncell.fill   = fill(row_bg)
-    ncell.border = thin_border()
-
-# ── Conditional formatting: any non-blank cell → green ───────────────────────
-green_fill = PatternFill("solid", fgColor=DONE_FILL)
-green_font = Font(bold=True, color=DONE_FONT, size=10)
-
-cf_range = (
-    f"{get_column_letter(FIRST_DAY_COL)}{FIRST_DATA_ROW}:"
-    f"{get_column_letter(LAST_DAY_COL)}{FIRST_DATA_ROW + len(HABITS) - 1}"
+# ── Conditional formatting: habit day grid ────────────────────────────────────
+hab_cf = (
+    f"{get_column_letter(FIRST_DAY_COL)}{FIRST_HAB_ROW}:"
+    f"{get_column_letter(LAST_DAY_COL)}{LAST_HAB_ROW}"
+)
+ws.conditional_formatting.add(
+    hab_cf,
+    CellIsRule(
+        operator="notEqual",
+        formula=['""'],
+        fill=solid(C_GREEN),
+        font=Font(bold=True, color=C_GREEN_FG, size=10),
+    ),
 )
 
+# ── Gap row ───────────────────────────────────────────────────────────────────
+ws.row_dimensions[GAP_ROW].height = 10
+
+# ── To-Do banner ──────────────────────────────────────────────────────────────
+ws.merge_cells(start_row=TODO_SEP_ROW, start_column=1,
+               end_row=TODO_SEP_ROW, end_column=TOTAL_COLS)
+sb = ws.cell(row=TODO_SEP_ROW, column=1, value="TO-DO LIST")
+sb.font      = font(C_WHITE, 12, bold=True)
+sb.fill      = solid(C_DARK_GREY)
+sb.alignment = align(h="left", indent=2)
+ws.row_dimensions[TODO_SEP_ROW].height = 28
+
+# ── To-Do section instruction ─────────────────────────────────────────────────
+ws.merge_cells(start_row=TODO_HDR_ROW, start_column=1,
+               end_row=TODO_HDR_ROW, end_column=TOTAL_COLS)
+ti = ws.cell(row=TODO_HDR_ROW, column=1,
+             value="     Task                                                    "
+                   "Done?    Notes")
+ti.font      = font(C_WHITE, 10, bold=True)
+ti.fill      = solid(C_MID_GREY)
+ti.alignment = align(h="left")
+ws.row_dimensions[TODO_HDR_ROW].height = 22
+
+# ── To-Do rows ────────────────────────────────────────────────────────────────
+for idx, task in enumerate(TODOS):
+    row    = FIRST_TODO_ROW + idx
+    row_bg = C_LIGHT_GREY if idx % 2 else C_WHITE
+    ws.row_dimensions[row].height = 22
+
+    tc = ws.cell(row=row, column=NAME_COL, value=task)
+    tc.font      = font(C_BLACK, 10)
+    tc.fill      = solid(row_bg)
+    tc.alignment = align(h="left", indent=1)
+    tc.border    = border()
+
+    dc = ws.cell(row=row, column=TODO_DONE_COL)   # blank — type X here
+    dc.fill      = solid(row_bg)
+    dc.alignment = align()
+    dc.border    = border()
+
+    # Merge remaining columns into one Notes cell
+    ws.merge_cells(start_row=row, start_column=TODO_NOTE_COL,
+                   end_row=row, end_column=TOTAL_COLS)
+    nc = ws.cell(row=row, column=TODO_NOTE_COL)
+    nc.fill      = solid(row_bg)
+    nc.alignment = align(h="left", indent=1)
+    nc.border    = border()
+
+# ── Conditional formatting: to-do Done? column ───────────────────────────────
+todo_cf = (
+    f"{get_column_letter(TODO_DONE_COL)}{FIRST_TODO_ROW}:"
+    f"{get_column_letter(TODO_DONE_COL)}{LAST_TODO_ROW}"
+)
 ws.conditional_formatting.add(
-    cf_range,
-    FormulaRule(
-        formula=[f'LEN(TRIM({get_column_letter(FIRST_DAY_COL)}{FIRST_DATA_ROW}))>0'],
-        fill=green_fill,
-        font=green_font,
-    )
+    todo_cf,
+    CellIsRule(
+        operator="notEqual",
+        formula=['""'],
+        fill=solid(C_GREEN),
+        font=Font(bold=True, color=C_GREEN_FG, size=10),
+    ),
 )
 
 # ── Column widths ─────────────────────────────────────────────────────────────
-ws.column_dimensions[get_column_letter(1)].width             = 1.5   # spacer
-ws.column_dimensions[get_column_letter(HABIT_COL)].width     = 28
-ws.column_dimensions[get_column_letter(CATEGORY_COL)].width  = 16
+ws.column_dimensions[get_column_letter(1)].width          = 1.5
+ws.column_dimensions[get_column_letter(NAME_COL)].width   = 26
 for d in range(DAYS_IN_MONTH):
-    ws.column_dimensions[get_column_letter(FIRST_DAY_COL + d)].width = 4.5
-ws.column_dimensions[get_column_letter(PROGRESS_COL)].width  = 10
-ws.column_dimensions[get_column_letter(NOTES_COL)].width     = 22
+    ws.column_dimensions[get_column_letter(FIRST_DAY_COL + d)].width = 4.2
+ws.column_dimensions[get_column_letter(PROG_COL)].width   = 7
 
-# Freeze panes so habit names stay visible when scrolling
-ws.freeze_panes = ws.cell(row=FIRST_DATA_ROW, column=FIRST_DAY_COL)
-
-# ── Sheet 2: Instructions ─────────────────────────────────────────────────────
-ws2 = wb.create_sheet("Instructions")
-instructions = [
-    ("HOW TO USE THIS HABIT TRACKER", True, 14, HEADER_BG, HEADER_FG),
-    ("", False, 11, "FFFFFF", "000000"),
-    ("1.  MARK A HABIT DONE", True, 12, SUBHEADER_BG, SUBHEADER_FG),
-    ("    Click any day cell next to a habit and type  X  (or any character).", False, 11, "FFFFFF", "000000"),
-    ("    The cell will automatically turn GREEN.", False, 11, "FFFFFF", "000000"),
-    ("    To unmark, simply delete the cell contents.", False, 11, "FFFFFF", "000000"),
-    ("", False, 11, "FFFFFF", "000000"),
-    ("2.  PROGRESS COLUMN", True, 12, SUBHEADER_BG, SUBHEADER_FG),
-    ("    The '% Progress' column calculates how many days you completed the habit", False, 11, "FFFFFF", "000000"),
-    ("    out of the total days in the month. It updates automatically.", False, 11, "FFFFFF", "000000"),
-    ("", False, 11, "FFFFFF", "000000"),
-    ("3.  ADDING YOUR OWN HABITS / TASKS", True, 12, SUBHEADER_BG, SUBHEADER_FG),
-    ("    Replace the sample habit names in column B with your own.", False, 11, "FFFFFF", "000000"),
-    ("    Update the Category column (C) to match.", False, 11, "FFFFFF", "000000"),
-    ("    The green conditional formatting applies to the whole day grid automatically.", False, 11, "FFFFFF", "000000"),
-    ("", False, 11, "FFFFFF", "000000"),
-    ("4.  NOTES", True, 12, SUBHEADER_BG, SUBHEADER_FG),
-    ("    Use the Notes column (last column) to add any reminders or comments.", False, 11, "FFFFFF", "000000"),
-    ("", False, 11, "FFFFFF", "000000"),
-    ("5.  WEEKEND COLUMNS", True, 12, SUBHEADER_BG, SUBHEADER_FG),
-    ("    Saturday and Sunday columns are tinted blue so they're easy to spot.", False, 11, "FFFFFF", "000000"),
-    ("", False, 11, "FFFFFF", "000000"),
-    ("TIP: Use  Ctrl + Home  to jump back to the top of the tracker sheet.", True, 11, "FFF2CC", "7F6000"),
-]
-
-for r, (text, bold, size, bg, fg) in enumerate(instructions, start=1):
-    ws2.merge_cells(start_row=r, start_column=1, end_row=r, end_column=6)
-    cell = ws2.cell(row=r, column=1, value=text)
-    cell.font      = Font(bold=bold, size=size, color=fg)
-    cell.fill      = fill(bg)
-    cell.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-    ws2.row_dimensions[r].height = 20 if text else 8
-
-for col in range(1, 7):
-    ws2.column_dimensions[get_column_letter(col)].width = 18
+# Freeze panes so habit names stay visible when scrolling right
+ws.freeze_panes = ws.cell(row=FIRST_HAB_ROW, column=FIRST_DAY_COL)
 
 # ── Save ──────────────────────────────────────────────────────────────────────
 filename = f"Habit_Tracker_{MONTH_NAME}_{YEAR}.xlsx"
 wb.save(filename)
-print(f"✅  Saved: {filename}")
+print(f"Saved: {filename}")
