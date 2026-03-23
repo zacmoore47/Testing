@@ -176,6 +176,29 @@
     runPipeline();
   });
 
+  async function pollForResult(apiKey, requestId, model) {
+    while (true) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const pollRes = await fetch("/api/poll", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ apiKey, requestId, model }),
+      });
+
+      const pollText = await pollRes.text();
+      let pollData;
+      try { pollData = JSON.parse(pollText); } catch {
+        throw new Error("Server error: " + pollText.slice(0, 200));
+      }
+      if (!pollRes.ok) throw new Error(pollData.error || "Polling failed");
+
+      if (pollData.status === "COMPLETED") {
+        return pollData.imageUrl;
+      }
+      // IN_QUEUE or IN_PROGRESS — keep polling
+    }
+  }
+
   async function runPipeline() {
     loadingSection.classList.remove("hidden");
     resultSection.classList.add("hidden");
@@ -185,8 +208,8 @@
     const apiKey = getApiKey();
 
     try {
-      // Step 1: Generate mannequin from face + body details
-      loadingStatus.textContent = "Creating your mannequin...";
+      // Step 1: Submit mannequin generation
+      loadingStatus.textContent = "Submitting mannequin generation...";
 
       const mannequinRes = await fetch("/api/mannequin", {
         method: "POST",
@@ -208,17 +231,21 @@
         throw new Error("Server error: " + mannequinText.slice(0, 200));
       }
       if (!mannequinRes.ok) throw new Error(mannequinData.error || "Mannequin generation failed");
-      if (!mannequinData.mannequinUrl) throw new Error("No mannequin image returned");
 
-      // Step 2: Apply clothing to mannequin
-      loadingStatus.textContent = "Applying clothing to your mannequin...";
+      // Poll for mannequin result
+      loadingStatus.textContent = "Generating your mannequin (this may take a minute)...";
+      const mannequinUrl = await pollForResult(apiKey, mannequinData.request_id, mannequinData.model);
+      if (!mannequinUrl) throw new Error("No mannequin image returned");
+
+      // Step 2: Submit clothing try-on
+      loadingStatus.textContent = "Submitting clothing try-on...";
 
       const tryonRes = await fetch("/api/tryon", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           apiKey,
-          mannequinUrl: mannequinData.mannequinUrl,
+          mannequinUrl,
           clothingImg: clothingDataURL,
           clothType: clothTypeSelect.value,
           numImages: parseInt(numImagesSelect.value),
@@ -231,9 +258,17 @@
         throw new Error("Server error: " + tryonText.slice(0, 200));
       }
       if (!tryonRes.ok) throw new Error(tryonData.error || "Try-on generation failed");
-      if (!tryonData.outputs || tryonData.outputs.length === 0) throw new Error("No results returned");
 
-      resultImages = tryonData.outputs;
+      // Poll for all try-on results
+      loadingStatus.textContent = "Applying clothing (this may take a minute)...";
+      const outputs = await Promise.all(
+        tryonData.request_ids.map((id) => pollForResult(apiKey, id, tryonData.model))
+      );
+
+      const validOutputs = outputs.filter(Boolean);
+      if (validOutputs.length === 0) throw new Error("No results returned");
+
+      resultImages = validOutputs;
       selectedIndex = 0;
       renderGallery();
 

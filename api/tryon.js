@@ -1,4 +1,4 @@
-export const config = { api: { bodyParser: { sizeLimit: "10mb" } }, maxDuration: 60 };
+export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -14,12 +14,12 @@ export default async function handler(req, res) {
   const count = Math.min(Math.max(parseInt(numImages) || 4, 1), 4);
 
   try {
-    // Use synchronous fal.ai endpoint — no polling needed
+    // Submit multiple CatVTON requests to the queue, return request_ids
     const seeds = Array.from({ length: count }, () => Math.floor(Math.random() * 999999));
 
-    const results = await Promise.all(
+    const submissions = await Promise.all(
       seeds.map(async (seed) => {
-        const falRes = await fetch("https://fal.run/fal-ai/cat-vton", {
+        const submitRes = await fetch("https://queue.fal.run/fal-ai/cat-vton", {
           method: "POST",
           headers: {
             "Authorization": "Key " + apiKey,
@@ -34,24 +34,22 @@ export default async function handler(req, res) {
           }),
         });
 
-        const falText = await falRes.text();
+        const text = await submitRes.text();
         let data;
-        try { data = JSON.parse(falText); } catch {
-          throw new Error("Invalid fal.ai response: " + falText.slice(0, 300));
+        try { data = JSON.parse(text); } catch {
+          throw new Error("Invalid fal.ai response: " + text.slice(0, 300));
         }
 
-        if (!falRes.ok) {
-          const errMsg = (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) || data.message || `fal.ai error ${falRes.status}`;
+        if (!submitRes.ok) {
+          const errMsg = (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) || data.message || `fal.ai error ${submitRes.status}`;
           throw new Error(errMsg);
         }
 
-        const outputUrl = data.image?.url || data.images?.[0]?.url;
-        if (!outputUrl) throw new Error("No output image returned. Keys: " + Object.keys(data).join(", "));
-        return outputUrl;
+        return data.request_id;
       })
     );
 
-    return res.status(200).json({ outputs: results });
+    return res.status(200).json({ request_ids: submissions, model: "fal-ai/cat-vton" });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }

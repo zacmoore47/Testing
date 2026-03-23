@@ -1,4 +1,4 @@
-export const config = { api: { bodyParser: { sizeLimit: "10mb" } }, maxDuration: 60 };
+export const config = { api: { bodyParser: { sizeLimit: "10mb" } } };
 
 export default async function handler(req, res) {
   if (req.method !== "POST") {
@@ -29,13 +29,14 @@ export default async function handler(req, res) {
 
   const prompt = `Full body studio photograph of a ${g}, ${buildDesc}, approximately ${heightCm}cm tall and ${weight} lbs, standing straight in a relaxed neutral pose facing the camera, wearing minimal plain white form-fitting undergarments, clean plain white studio background, soft even studio lighting, professional fashion photography, head to toe visible, high detail face`;
 
-  const authHeader = { "Authorization": "Key " + apiKey, "Content-Type": "application/json" };
-
   try {
-    // Use fal.ai synchronous endpoint (waits for result, no polling needed)
-    const falRes = await fetch("https://fal.run/fal-ai/pulid", {
+    // Submit to fal.ai queue and return request_id immediately
+    const submitRes = await fetch("https://queue.fal.run/fal-ai/pulid", {
       method: "POST",
-      headers: authHeader,
+      headers: {
+        "Authorization": "Key " + apiKey,
+        "Content-Type": "application/json",
+      },
       body: JSON.stringify({
         prompt,
         reference_images: [{ image_url: faceImg }],
@@ -47,26 +48,19 @@ export default async function handler(req, res) {
       }),
     });
 
-    const falText = await falRes.text();
-    let result;
-    try { result = JSON.parse(falText); } catch {
-      return res.status(500).json({ error: "Invalid response from fal.ai: " + falText.slice(0, 300) });
+    const text = await submitRes.text();
+    let data;
+    try { data = JSON.parse(text); } catch {
+      return res.status(500).json({ error: "Invalid fal.ai response: " + text.slice(0, 300) });
     }
 
-    if (!falRes.ok) {
-      const errMsg = (typeof result.detail === "string" ? result.detail : JSON.stringify(result.detail)) || result.message || `fal.ai error ${falRes.status}: ${falText.slice(0, 300)}`;
-      return res.status(falRes.status).json({ error: errMsg });
+    if (!submitRes.ok) {
+      const errMsg = (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) || data.message || `fal.ai error ${submitRes.status}`;
+      return res.status(submitRes.status).json({ error: errMsg });
     }
 
-    const outputUrl = result.images?.[0]?.url || result.image?.url;
-
-    if (!outputUrl) {
-      return res.status(500).json({
-        error: "No image in result. Keys returned: " + Object.keys(result).join(", "),
-      });
-    }
-
-    return res.status(200).json({ mannequinUrl: outputUrl });
+    // Return request_id for client-side polling
+    return res.status(200).json({ request_id: data.request_id, model: "fal-ai/pulid" });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
