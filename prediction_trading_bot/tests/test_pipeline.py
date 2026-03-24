@@ -95,36 +95,25 @@ async def test_reddit_scraper_returns_structured_data():
 
 @pytest.mark.asyncio
 async def test_rss_scraper_returns_items():
-    """RSS scraper fetches and parses feeds via mocked feedparser."""
-    import sys
-    import types
-
-    # feedparser depends on sgmllib which is unavailable on Python 3.11+;
-    # mock the entire module so we can import rss_scraper cleanly.
-    mock_feedparser = types.ModuleType("feedparser")
-
-    def _mock_parse(raw_xml):
-        entry = types.SimpleNamespace(
-            title="Test headline about markets",
-            summary="Markets are volatile today",
-            published="Mon, 01 Jan 2025 00:00:00 GMT",
-        )
-        # Wrap in dict-like access for .get()
-        entry.get = lambda key, default="": getattr(entry, key, default)
-        return types.SimpleNamespace(entries=[entry])
-
-    mock_feedparser.parse = _mock_parse
-    sys.modules["feedparser"] = mock_feedparser
-
-    # Now import rss_scraper (it will get our mock feedparser)
-    import importlib
-    if "prediction_trading_bot.agents.research.rss_scraper" in sys.modules:
-        del sys.modules["prediction_trading_bot.agents.research.rss_scraper"]
+    """RSS scraper fetches and parses feeds via stdlib XML parser."""
     import prediction_trading_bot.agents.research.rss_scraper as rss_mod
+
+    fake_feed_xml = """<?xml version="1.0"?>
+    <rss version="2.0">
+      <channel>
+        <title>Test Feed</title>
+        <item>
+          <title>Test headline about markets</title>
+          <description>Markets are volatile today</description>
+          <pubDate>Mon, 01 Jan 2025 00:00:00 GMT</pubDate>
+          <link>https://example.com/article</link>
+        </item>
+      </channel>
+    </rss>"""
 
     mock_response = AsyncMock()
     mock_response.status = 200
-    mock_response.text = AsyncMock(return_value="<rss>mock</rss>")
+    mock_response.text = AsyncMock(return_value=fake_feed_xml)
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
     mock_response.__aexit__ = AsyncMock(return_value=False)
 

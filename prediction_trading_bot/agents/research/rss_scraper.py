@@ -1,13 +1,17 @@
-"""RSS scraper — fetches and parses RSS feeds, scores sentiment."""
+"""RSS scraper — fetches and parses RSS feeds, scores sentiment.
+
+Uses stdlib xml.etree.ElementTree instead of feedparser to avoid the
+sgmllib dependency that is broken on Python 3.11+.
+"""
 
 import asyncio
 import logging
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from email.utils import parsedate_to_datetime
 
 import aiohttp
-import feedparser
 from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
 
 from prediction_trading_bot import config
@@ -18,23 +22,81 @@ _sentiment = SentimentIntensityAnalyzer()
 
 _SIMILARITY_THRESHOLD = 0.85
 
+# Common RSS namespace prefixes
+_NS = {
+    "dc": "http://purl.org/dc/elements/1.1/",
+    "content": "http://purl.org/rss/1.0/modules/content/",
+    "atom": "http://www.w3.org/2005/Atom",
+}
+
+
+def _text(element: ET.Element | None) -> str:
+    """Safely extract text from an XML element."""
+    if element is None:
+        return ""
+    return (element.text or "").strip()
+
 
 def _parse_feed(raw_xml: str, feed_url: str) -> list[dict]:
-    """Parse a single feed's XML into result dicts."""
-    parsed = feedparser.parse(raw_xml)
+    """Parse a single feed's XML into result dicts using ElementTree."""
     items: list[dict] = []
 
-    for entry in parsed.entries:
-        title = entry.get("title", "")
-        summary = entry.get("summary", entry.get("description", ""))
-        text = f"{title}. {summary}".strip()
+    try:
+        root = ET.fromstring(raw_xml)
+    except ET.ParseError as exc:
+        logger.warning("Failed to parse XML from %s: %s", feed_url, exc)
+        return items
 
-        # Try to extract a timestamp.
-        published = entry.get("published", entry.get("updated", ""))
+    # Handle RSS 2.0 (<rss><channel><item>)
+    entries: list[ET.Element] = []
+    channel = root.find("channel")
+    if channel is not None:
+        entries = channel.findall("item")
+
+    # Handle Atom feeds (<feed><entry>)
+    if not entries:
+        entries = root.findall("{http://www.w3.org/2005/Atom}entry")
+        if not entries:
+            entries = root.findall("entry")
+
+    # Handle RSS 1.0 / RDF
+    if not entries:
+        entries = root.findall("item")
+
+    for entry in entries:
+        # RSS 2.0 fields
+        title = _text(entry.find("title"))
+        if not title:
+            title = _text(entry.find("{http://www.w3.org/2005/Atom}title"))
+
+        summary = _text(entry.find("description"))
+        if not summary:
+            summary = _text(entry.find("{http://www.w3.org/2005/Atom}summary"))
+        if not summary:
+            content_el = entry.find("{http://www.w3.org/2005/Atom}content")
+            summary = _text(content_el)
+
+        text = f"{title}. {summary}".strip()
+        if not text or text == ".":
+            continue
+
+        # Timestamp
+        published = _text(entry.find("pubDate"))
+        if not published:
+            published = _text(entry.find("{http://purl.org/dc/elements/1.1/}date"))
+        if not published:
+            published = _text(entry.find("{http://www.w3.org/2005/Atom}published"))
+        if not published:
+            published = _text(entry.find("{http://www.w3.org/2005/Atom}updated"))
+
         try:
             ts = parsedate_to_datetime(published).astimezone(timezone.utc)
         except Exception:  # noqa: BLE001
-            ts = datetime.now(timezone.utc)
+            try:
+                # Try ISO 8601 format (common in Atom feeds)
+                ts = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            except Exception:  # noqa: BLE001
+                ts = datetime.now(timezone.utc)
 
         sentiment = _sentiment.polarity_scores(text)["compound"]
 
