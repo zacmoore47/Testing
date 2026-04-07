@@ -1,5 +1,8 @@
-// Real Yahoo Finance data via the public v8 chart endpoint. No package, no auth needed.
-// Returns OHLCV bars from which we derive price, volume, RSI, EMA.
+// Real market data via Stooq (free, no auth, batched). Yahoo fallback.
+// Stooq supports comma-separated tickers in one call:
+//   https://stooq.com/q/l/?s=msft.us,aapl.us&f=sd2t2ohlcvn&h&e=csv
+// And daily history per ticker:
+//   https://stooq.com/q/d/l/?s=msft.us&i=d
 import { getEarningsDaysAway } from './finnhubService';
 
 export interface Quote {
@@ -17,6 +20,16 @@ export interface Quote {
   earningsDaysAway: number;
   isReal: boolean;
 }
+
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+  'Accept': 'text/csv,application/json,*/*',
+};
+
+// 5-minute in-memory cache so re-runs don't hammer external sources.
+const TTL = 5 * 60_000;
+const snapshotCache = new Map<string, { ts: number; q: Quote }>();
+const historyCache = new Map<string, { ts: number; closes: number[]; volumes: number[] }>();
 
 function seeded(ticker: string, salt = 0) {
   let h = salt;
@@ -70,92 +83,137 @@ function ema(values: number[], period: number): number {
   return prev;
 }
 
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-  'Accept': 'application/json',
-};
+function toStooq(t: string): string {
+  return `${t.toLowerCase().replace('.', '-').replace('-', '-')}.us`;
+}
 
-let yahooErrorLogged = 0;
-// Fetch a single ticker's OHLCV history from Yahoo's free public chart endpoint.
-async function fetchChart(ticker: string): Promise<any | null> {
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
+// Stooq batched snapshot — one HTTP call returns OHLCV for many symbols.
+let stooqErrLogged = 0;
+async function fetchStooqSnapshot(tickers: string[]): Promise<Map<string, Quote>> {
+  const out = new Map<string, Quote>();
+  if (!tickers.length) return out;
+  const symbols = tickers.map(toStooq).join(',');
+  const url = `https://stooq.com/q/l/?s=${symbols}&f=sd2t2ohlcvn&h&e=csv`;
   try {
     const r = await fetch(url, { headers: HEADERS });
     if (!r.ok) {
-      if (yahooErrorLogged++ < 3) console.warn(`[yahoo] ${ticker} HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
-      return null;
+      if (stooqErrLogged++ < 3) console.warn(`[stooq] HTTP ${r.status}`);
+      return out;
     }
-    const data: any = await r.json();
-    const result = data?.chart?.result?.[0];
-    if (!result && yahooErrorLogged++ < 3) console.warn(`[yahoo] ${ticker} empty result:`, JSON.stringify(data).slice(0, 200));
-    return result || null;
+    const csv = await r.text();
+    const lines = csv.trim().split('\n');
+    if (lines.length < 2) return out;
+    for (const line of lines.slice(1)) {
+      const cols = line.split(',');
+      if (cols.length < 9) continue;
+      const symbol = cols[0].replace(/\.us$/i, '').toUpperCase().replace('-', '.');
+      const open = parseFloat(cols[3]);
+      const high = parseFloat(cols[4]);
+      const low = parseFloat(cols[5]);
+      const close = parseFloat(cols[6]);
+      const volume = parseFloat(cols[7]);
+      const name = cols.slice(8).join(',').replace(/^"|"$/g, '');
+      if (isNaN(close) || close === 0) continue;
+      out.set(symbol, {
+        ticker: symbol,
+        companyName: name || symbol,
+        price: close,
+        volume: isNaN(volume) ? 0 : volume,
+        avgVolume20d: isNaN(volume) ? 1 : volume, // approximate; refined in detailed step
+        volumeRatio: 1,
+        bidAskSpreadPct: +(((high - low) / Math.max(close, 1)) * 100).toFixed(3),
+        rsi14: 50,
+        ema20: open || close,
+        impliedVolatility: 0.3,
+        shortInterestRatio: 0,
+        earningsDaysAway: -1,
+        isReal: true,
+      });
+    }
   } catch (e) {
-    if (yahooErrorLogged++ < 3) console.warn(`[yahoo] ${ticker} fetch threw:`, (e as Error).message);
+    if (stooqErrLogged++ < 3) console.warn('[stooq] snapshot threw:', (e as Error).message);
+  }
+  return out;
+}
+
+// Stooq daily history for one ticker. Used in Predict stage to compute real RSI + EMA + 20d avg volume.
+let stooqHistErr = 0;
+async function fetchStooqHistory(ticker: string): Promise<{ closes: number[]; volumes: number[] } | null> {
+  const cached = historyCache.get(ticker);
+  if (cached && Date.now() - cached.ts < TTL) return { closes: cached.closes, volumes: cached.volumes };
+  try {
+    const r = await fetch(`https://stooq.com/q/d/l/?s=${toStooq(ticker)}&i=d`, { headers: HEADERS });
+    if (!r.ok) return null;
+    const csv = await r.text();
+    if (!csv.startsWith('Date,')) return null;
+    const lines = csv.trim().split('\n').slice(1);
+    const closes: number[] = [];
+    const volumes: number[] = [];
+    for (const line of lines) {
+      const [, , , , close, volume] = line.split(',');
+      const c = parseFloat(close);
+      const v = parseFloat(volume);
+      if (!isNaN(c)) closes.push(c);
+      if (!isNaN(v)) volumes.push(v);
+    }
+    const trimmed = { closes: closes.slice(-60), volumes: volumes.slice(-60) };
+    historyCache.set(ticker, { ts: Date.now(), ...trimmed });
+    return trimmed;
+  } catch (e) {
+    if (stooqHistErr++ < 3) console.warn(`[stooq] history ${ticker}:`, (e as Error).message);
     return null;
   }
 }
 
-function chartToQuote(ticker: string, chart: any): Quote {
-  const meta = chart.meta || {};
-  const ind = chart.indicators?.quote?.[0] || {};
-  const closes: number[] = (ind.close || []).filter((v: any) => typeof v === 'number');
-  const volumes: number[] = (ind.volume || []).filter((v: any) => typeof v === 'number');
-  const last = closes[closes.length - 1] || meta.regularMarketPrice || 0;
-  const lastVol = volumes[volumes.length - 1] || meta.regularMarketVolume || 0;
-  const recent20vol = volumes.slice(-20);
-  const avg20vol = recent20vol.length ? recent20vol.reduce((a, b) => a + b, 0) / recent20vol.length : 1;
-  return {
-    ticker,
-    companyName: meta.longName || meta.shortName || ticker,
-    price: +last.toFixed(2),
-    volume: lastVol,
-    avgVolume20d: Math.floor(avg20vol),
-    volumeRatio: +(lastVol / Math.max(avg20vol, 1)).toFixed(2),
-    bidAskSpreadPct: 0.05, // chart endpoint doesn't expose bid/ask; assume tight for liquid names
-    rsi14: computeRSI(closes),
-    ema20: +ema(closes.slice(-20), 20).toFixed(2),
-    impliedVolatility: 0.3, // not available without options chain; use a neutral default
-    shortInterestRatio: 0,
-    earningsDaysAway: -1,
-    isReal: true,
-  };
-}
-
-// Throttled batch fetch to avoid hammering Yahoo (which will start dropping requests).
-async function batchFetch<T>(items: string[], worker: (s: string) => Promise<T>, concurrency = 6): Promise<T[]> {
-  const out: T[] = new Array(items.length);
-  let idx = 0;
-  async function next() {
-    while (idx < items.length) {
-      const i = idx++;
-      out[i] = await worker(items[i]);
+// Public: batched quotes for the Filter stage. Uses cache + chunked Stooq calls.
+const CHUNK = 25;
+export async function getQuotes(tickers: string[]): Promise<Quote[]> {
+  const now = Date.now();
+  const need: string[] = [];
+  const cached = new Map<string, Quote>();
+  for (const t of tickers) {
+    const c = snapshotCache.get(t);
+    if (c && now - c.ts < TTL) cached.set(t, c.q);
+    else need.push(t);
+  }
+  // Chunked sequential fetch (sequential is fine — one call returns 25 symbols)
+  for (let i = 0; i < need.length; i += CHUNK) {
+    const chunk = need.slice(i, i + CHUNK);
+    const got = await fetchStooqSnapshot(chunk);
+    for (const t of chunk) {
+      const q = got.get(t) || mockQuote(t);
+      snapshotCache.set(t, { ts: now, q });
+      cached.set(t, q);
     }
   }
-  await Promise.all(Array.from({ length: concurrency }, next));
-  return out;
+  return tickers.map(t => cached.get(t) || mockQuote(t));
 }
 
-export async function getQuotes(tickers: string[]): Promise<Quote[]> {
-  const results = await batchFetch(tickers, async t => {
-    const chart = await fetchChart(t);
-    return chart ? chartToQuote(t, chart) : mockQuote(t);
-  });
-  return results;
-}
-
+// Public: detailed quote with real RSI + EMA + earnings. Used in Predict for top candidates.
 export async function getDetailedQuote(ticker: string): Promise<Quote> {
-  const chart = await fetchChart(ticker);
-  if (!chart) return mockQuote(ticker);
-  const q = chartToQuote(ticker, chart);
-  q.earningsDaysAway = await getEarningsDaysAway(ticker);
-  return q;
+  const [base, hist, earningsDays] = await Promise.all([
+    (async () => (await getQuotes([ticker]))[0])(),
+    fetchStooqHistory(ticker),
+    getEarningsDaysAway(ticker),
+  ]);
+  if (hist && hist.closes.length) {
+    base.rsi14 = computeRSI(hist.closes);
+    base.ema20 = +ema(hist.closes.slice(-20), 20).toFixed(2);
+    const vols = hist.volumes.slice(-20);
+    if (vols.length) {
+      base.avgVolume20d = Math.floor(vols.reduce((a, b) => a + b, 0) / vols.length);
+      base.volumeRatio = +(base.volume / Math.max(base.avgVolume20d, 1)).toFixed(2);
+    }
+  }
+  base.earningsDaysAway = earningsDays;
+  return base;
 }
 
 export async function getQuote(ticker: string): Promise<Quote> {
   return getDetailedQuote(ticker);
 }
 
-// Market implied probability proxy from price momentum + IV.
+// Market implied probability proxy.
 export function impliedProbability(q: Quote): number {
   const momentum = (q.price - q.ema20) / Math.max(q.ema20, 1);
   return Math.max(0.05, Math.min(0.95, 0.5 + momentum * 0.4 - q.impliedVolatility * 0.1));
