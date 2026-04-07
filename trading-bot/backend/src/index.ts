@@ -27,7 +27,19 @@ const agentStatus = {
 };
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, uptime: process.uptime(), agents: agentStatus, claudeEnabled: !!process.env.ANTHROPIC_API_KEY });
+  res.json({
+    ok: true,
+    uptime: process.uptime(),
+    agents: agentStatus,
+    sources: {
+      claude: !!process.env.ANTHROPIC_API_KEY,
+      yahoo: true,
+      finnhub: !!process.env.FINNHUB_API_KEY,
+      reddit: !!process.env.REDDIT_CLIENT_ID,
+      twitter: !!process.env.TWITTER_BEARER_TOKEN,
+    },
+    claudeEnabled: !!process.env.ANTHROPIC_API_KEY,
+  });
 });
 
 app.use('/api/research', research);

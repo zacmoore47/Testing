@@ -1,7 +1,7 @@
 import { FilteredStock } from './filterAgent';
 import { getResearchByTicker, insertPrediction, insertAlert, uid, now, getLatestWeights } from '../db/queries';
 import { callClaudeJSON } from '../services/claudeService';
-import { impliedProbability } from '../services/marketDataService';
+import { impliedProbability, getDetailedQuote } from '../services/marketDataService';
 
 export interface FeatureVector {
   sentimentScore: number;
@@ -112,7 +112,13 @@ async function llmCalibrate(ticker: string, f: FeatureVector, price: number, bas
 
 export async function runPredict(filtered: FilteredStock[]) {
   const weights = loadWeights();
-  const predictions = await Promise.all(filtered.slice(0, 20).map(async s => {
+  const top = filtered.slice(0, 15);
+  // Enrich top candidates with real RSI/earnings/short interest from Yahoo + Finnhub.
+  await Promise.all(top.map(async s => {
+    try { s.quote = await getDetailedQuote(s.ticker); s.currentPrice = s.quote.price || s.currentPrice; }
+    catch {}
+  }));
+  const predictions = await Promise.all(top.map(async s => {
     const f = buildFeatures(s);
     const llm = await llmCalibrate(s.ticker, f, s.currentPrice, s.currentPrice);
     const llmProb = Math.max(0.01, Math.min(0.99, llm.probability));
