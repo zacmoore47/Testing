@@ -1,8 +1,21 @@
 // Real Yahoo Finance data with mock fallback. yahoo-finance2 is unofficial and free, no key needed.
-import yahooFinance from 'yahoo-finance2';
+// yahoo-finance2 v2 is ESM-only, so we lazy-load via dynamic import to stay compatible with our CJS backend.
 import { getEarningsDaysAway } from './finnhubService';
 
-try { (yahooFinance as any).suppressNotices?.(['ripHistorical', 'yahooSurvey']); } catch {}
+let yfPromise: Promise<any> | null = null;
+async function getYF(): Promise<any> {
+  if (!yfPromise) {
+    yfPromise = import('yahoo-finance2').then((m: any) => {
+      const yf = m.default || m;
+      try { yf.suppressNotices?.(['ripHistorical', 'yahooSurvey']); } catch {}
+      return yf;
+    }).catch((e: Error) => {
+      console.warn('[yahoo] failed to load yahoo-finance2:', e.message);
+      return null;
+    });
+  }
+  return yfPromise;
+}
 
 export interface Quote {
   ticker: string;
@@ -67,6 +80,8 @@ function computeRSI(closes: number[], period = 14): number {
 
 // Batched lightweight quotes for the Filter stage. Yahoo Finance accepts arrays.
 export async function getQuotes(tickers: string[]): Promise<Quote[]> {
+  const yahooFinance = await getYF();
+  if (!yahooFinance) return tickers.map(mockQuote);
   try {
     const results = await yahooFinance.quote(tickers as any) as any[];
     const arr = Array.isArray(results) ? results : [results];
@@ -101,6 +116,8 @@ export async function getQuotes(tickers: string[]): Promise<Quote[]> {
 
 // Detailed quote with RSI + earnings + short interest. Used in Predict stage for ~20 stocks.
 export async function getDetailedQuote(ticker: string): Promise<Quote> {
+  const yahooFinance = await getYF();
+  if (!yahooFinance) return mockQuote(ticker);
   try {
     const [summary, hist] = await Promise.all([
       yahooFinance.quoteSummary(ticker, {
