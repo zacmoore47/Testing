@@ -75,15 +75,24 @@ const HEADERS = {
   'Accept': 'application/json',
 };
 
+let yahooErrorLogged = 0;
 // Fetch a single ticker's OHLCV history from Yahoo's free public chart endpoint.
 async function fetchChart(ticker: string): Promise<any | null> {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
   try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
     const r = await fetch(url, { headers: HEADERS });
-    if (!r.ok) return null;
+    if (!r.ok) {
+      if (yahooErrorLogged++ < 3) console.warn(`[yahoo] ${ticker} HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      return null;
+    }
     const data: any = await r.json();
-    return data?.chart?.result?.[0] || null;
-  } catch { return null; }
+    const result = data?.chart?.result?.[0];
+    if (!result && yahooErrorLogged++ < 3) console.warn(`[yahoo] ${ticker} empty result:`, JSON.stringify(data).slice(0, 200));
+    return result || null;
+  } catch (e) {
+    if (yahooErrorLogged++ < 3) console.warn(`[yahoo] ${ticker} fetch threw:`, (e as Error).message);
+    return null;
+  }
 }
 
 function chartToQuote(ticker: string, chart: any): Quote {
