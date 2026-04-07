@@ -9,10 +9,15 @@ let cache: any[] = [];
 
 router.post('/run', rateLimit({ windowMs: 60_000, max: 3 }), async (_req, res) => {
   try {
+    console.log('[filter] /run triggered');
     const results = await runFilter();
     cache = results;
+    console.log(`[filter] returning ${results.length} results`);
     res.json({ ok: true, count: results.length, results });
-  } catch (e) { res.status(500).json({ ok: false, error: (e as Error).message }); }
+  } catch (e) {
+    console.error('[filter] error:', e);
+    res.status(500).json({ ok: false, error: (e as Error).message });
+  }
 });
 
 router.get('/results', (_req, res) => {

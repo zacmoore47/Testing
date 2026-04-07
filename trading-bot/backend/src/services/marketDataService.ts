@@ -88,7 +88,7 @@ function toStooq(t: string): string {
 }
 
 // Stooq batched snapshot — one HTTP call returns OHLCV for many symbols.
-let stooqErrLogged = 0;
+let stooqDebugCount = 0;
 async function fetchStooqSnapshot(tickers: string[]): Promise<Map<string, Quote>> {
   const out = new Map<string, Quote>();
   if (!tickers.length) return out;
@@ -97,12 +97,18 @@ async function fetchStooqSnapshot(tickers: string[]): Promise<Map<string, Quote>
   try {
     const r = await fetch(url, { headers: HEADERS });
     if (!r.ok) {
-      if (stooqErrLogged++ < 3) console.warn(`[stooq] HTTP ${r.status}`);
+      console.warn(`[stooq] HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
       return out;
     }
     const csv = await r.text();
-    const lines = csv.trim().split('\n');
-    if (lines.length < 2) return out;
+    if (stooqDebugCount++ < 1) {
+      console.log(`[stooq] sample response (${csv.length} bytes):\n${csv.slice(0, 400)}`);
+    }
+    const lines = csv.replace(/\r/g, '').trim().split('\n');
+    if (lines.length < 2) {
+      console.warn(`[stooq] response has only ${lines.length} lines`);
+      return out;
+    }
     for (const line of lines.slice(1)) {
       const cols = line.split(',');
       if (cols.length < 9) continue;
@@ -119,7 +125,7 @@ async function fetchStooqSnapshot(tickers: string[]): Promise<Map<string, Quote>
         companyName: name || symbol,
         price: close,
         volume: isNaN(volume) ? 0 : volume,
-        avgVolume20d: isNaN(volume) ? 1 : volume, // approximate; refined in detailed step
+        avgVolume20d: isNaN(volume) ? 1 : volume,
         volumeRatio: 1,
         bidAskSpreadPct: +(((high - low) / Math.max(close, 1)) * 100).toFixed(3),
         rsi14: 50,
@@ -131,7 +137,7 @@ async function fetchStooqSnapshot(tickers: string[]): Promise<Map<string, Quote>
       });
     }
   } catch (e) {
-    if (stooqErrLogged++ < 3) console.warn('[stooq] snapshot threw:', (e as Error).message);
+    console.warn('[stooq] snapshot threw:', (e as Error).message);
   }
   return out;
 }
@@ -168,6 +174,7 @@ async function fetchStooqHistory(ticker: string): Promise<{ closes: number[]; vo
 // Public: batched quotes for the Filter stage. Uses cache + chunked Stooq calls.
 const CHUNK = 25;
 export async function getQuotes(tickers: string[]): Promise<Quote[]> {
+  console.log(`[market] getQuotes(${tickers.length} tickers)`);
   const now = Date.now();
   const need: string[] = [];
   const cached = new Map<string, Quote>();
@@ -176,16 +183,20 @@ export async function getQuotes(tickers: string[]): Promise<Quote[]> {
     if (c && now - c.ts < TTL) cached.set(t, c.q);
     else need.push(t);
   }
-  // Chunked sequential fetch (sequential is fine — one call returns 25 symbols)
+  console.log(`[market] cached=${cached.size} fetching=${need.length}`);
+  let realCount = 0;
   for (let i = 0; i < need.length; i += CHUNK) {
     const chunk = need.slice(i, i + CHUNK);
     const got = await fetchStooqSnapshot(chunk);
+    console.log(`[market] stooq chunk ${i / CHUNK + 1}: parsed ${got.size}/${chunk.length}`);
     for (const t of chunk) {
       const q = got.get(t) || mockQuote(t);
+      if (q.isReal) realCount++;
       snapshotCache.set(t, { ts: now, q });
       cached.set(t, q);
     }
   }
+  console.log(`[market] result: ${realCount} real, ${tickers.length - realCount} mock`);
   return tickers.map(t => cached.get(t) || mockQuote(t));
 }
 
