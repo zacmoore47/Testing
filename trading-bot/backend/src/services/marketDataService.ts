@@ -1,28 +1,6 @@
-// Real Yahoo Finance data with mock fallback. yahoo-finance2 is unofficial and free, no key needed.
-// yahoo-finance2 v2 is ESM-only, so we lazy-load via dynamic import to stay compatible with our CJS backend.
+// Real Yahoo Finance data via the public v8 chart endpoint. No package, no auth needed.
+// Returns OHLCV bars from which we derive price, volume, RSI, EMA.
 import { getEarningsDaysAway } from './finnhubService';
-
-let yfPromise: Promise<any> | null = null;
-async function getYF(): Promise<any> {
-  if (!yfPromise) {
-    yfPromise = import('yahoo-finance2').then((m: any) => {
-      // ESM-via-CJS interop can nest the default export. Try every plausible shape.
-      const candidates = [m?.default?.default, m?.default, m];
-      const yf = candidates.find(c => c && typeof c.quote === 'function');
-      if (!yf) {
-        console.warn('[yahoo] could not locate .quote() on module. Keys:',
-          Object.keys(m || {}), 'default keys:', Object.keys(m?.default || {}));
-        return null;
-      }
-      try { yf.suppressNotices?.(['ripHistorical', 'yahooSurvey']); } catch {}
-      return yf;
-    }).catch((e: Error) => {
-      console.warn('[yahoo] failed to load yahoo-finance2:', e.message);
-      return null;
-    });
-  }
-  return yfPromise;
-}
 
 export interface Quote {
   ticker: string;
@@ -66,7 +44,6 @@ function mockQuote(ticker: string): Quote {
   };
 }
 
-// 14-period RSI from a closing-price series.
 function computeRSI(closes: number[], period = 14): number {
   if (closes.length < period + 1) return 50;
   let gains = 0, losses = 0;
@@ -85,101 +62,92 @@ function computeRSI(closes: number[], period = 14): number {
   return +(100 - 100 / (1 + rs)).toFixed(1);
 }
 
-// Batched lightweight quotes for the Filter stage. Yahoo Finance accepts arrays.
-export async function getQuotes(tickers: string[]): Promise<Quote[]> {
-  const yahooFinance = await getYF();
-  if (!yahooFinance) return tickers.map(mockQuote);
-  try {
-    const results = await yahooFinance.quote(tickers as any) as any[];
-    const arr = Array.isArray(results) ? results : [results];
-    return arr.map((q: any) => {
-      if (!q || !q.regularMarketPrice) return mockQuote(q?.symbol || 'UNKNOWN');
-      const price = q.regularMarketPrice;
-      const volume = q.regularMarketVolume ?? 0;
-      const avgVol = q.averageDailyVolume10Day ?? q.averageDailyVolume3Month ?? 1;
-      const bid = q.bid ?? price;
-      const ask = q.ask ?? price;
-      return {
-        ticker: q.symbol,
-        companyName: q.longName || q.shortName || q.symbol,
-        price,
-        volume,
-        avgVolume20d: avgVol,
-        volumeRatio: +(volume / Math.max(avgVol, 1)).toFixed(2),
-        bidAskSpreadPct: +(((ask - bid) / Math.max(price, 1)) * 100).toFixed(3),
-        rsi14: 50, // filled in detailed step
-        ema20: q.fiftyDayAverage ?? price,
-        impliedVolatility: 0.3, // proxy filled in detailed step
-        shortInterestRatio: 0,
-        earningsDaysAway: -1,
-        isReal: true,
-      } as Quote;
-    });
-  } catch (e) {
-    console.warn('[yahoo] batch quote failed, using mocks:', (e as Error).message);
-    return tickers.map(mockQuote);
-  }
+function ema(values: number[], period: number): number {
+  if (!values.length) return 0;
+  const k = 2 / (period + 1);
+  let prev = values[0];
+  for (let i = 1; i < values.length; i++) prev = values[i] * k + prev * (1 - k);
+  return prev;
 }
 
-// Detailed quote with RSI + earnings + short interest. Used in Predict stage for ~20 stocks.
-export async function getDetailedQuote(ticker: string): Promise<Quote> {
-  const yahooFinance = await getYF();
-  if (!yahooFinance) return mockQuote(ticker);
+const HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+  'Accept': 'application/json',
+};
+
+// Fetch a single ticker's OHLCV history from Yahoo's free public chart endpoint.
+async function fetchChart(ticker: string): Promise<any | null> {
   try {
-    const [summary, hist] = await Promise.all([
-      yahooFinance.quoteSummary(ticker, {
-        modules: ['price', 'summaryDetail', 'defaultKeyStatistics'] as any,
-      }).catch(() => null),
-      yahooFinance.historical(ticker, {
-        period1: new Date(Date.now() - 60 * 86400_000),
-        interval: '1d',
-      }).catch(() => [] as any[]),
-    ]);
-    if (!summary) return mockQuote(ticker);
-    const price = (summary.price as any)?.regularMarketPrice ?? 0;
-    const volume = (summary.price as any)?.regularMarketVolume ?? 0;
-    const sd: any = summary.summaryDetail || {};
-    const ks: any = (summary as any).defaultKeyStatistics || {};
-    const closes = (hist || []).map((h: any) => h.close).filter((c: number) => typeof c === 'number');
-    const ema20 = closes.length >= 20
-      ? closes.slice(-20).reduce((a: number, b: number) => a + b, 0) / 20
-      : sd.fiftyDayAverage ?? price;
-    const rsi = computeRSI(closes);
-    const bid = sd.bid ?? price;
-    const ask = sd.ask ?? price;
-    const earningsDays = await getEarningsDaysAway(ticker);
-    const shortRatio = (ks.shortRatio ?? 0) / 100;
-    // Yahoo doesn't publish IV at the security level; use beta * 0.3 as a proxy.
-    const beta = ks.beta ?? 1;
-    const impliedVolatility = Math.max(0.1, Math.min(1.5, beta * 0.3));
-    return {
-      ticker,
-      companyName: (summary.price as any)?.longName || (summary.price as any)?.shortName || ticker,
-      price,
-      volume,
-      avgVolume20d: sd.averageDailyVolume10Day ?? 1,
-      volumeRatio: +(volume / Math.max(sd.averageDailyVolume10Day ?? 1, 1)).toFixed(2),
-      bidAskSpreadPct: +(((ask - bid) / Math.max(price, 1)) * 100).toFixed(3),
-      rsi14: rsi,
-      ema20: +ema20.toFixed(2),
-      impliedVolatility: +impliedVolatility.toFixed(3),
-      shortInterestRatio: +shortRatio.toFixed(3),
-      earningsDaysAway: earningsDays,
-      isReal: true,
-    };
-  } catch (e) {
-    console.warn(`[yahoo] detailed ${ticker}:`, (e as Error).message);
-    return mockQuote(ticker);
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}?interval=1d&range=3mo`;
+    const r = await fetch(url, { headers: HEADERS });
+    if (!r.ok) return null;
+    const data: any = await r.json();
+    return data?.chart?.result?.[0] || null;
+  } catch { return null; }
+}
+
+function chartToQuote(ticker: string, chart: any): Quote {
+  const meta = chart.meta || {};
+  const ind = chart.indicators?.quote?.[0] || {};
+  const closes: number[] = (ind.close || []).filter((v: any) => typeof v === 'number');
+  const volumes: number[] = (ind.volume || []).filter((v: any) => typeof v === 'number');
+  const last = closes[closes.length - 1] || meta.regularMarketPrice || 0;
+  const lastVol = volumes[volumes.length - 1] || meta.regularMarketVolume || 0;
+  const recent20vol = volumes.slice(-20);
+  const avg20vol = recent20vol.length ? recent20vol.reduce((a, b) => a + b, 0) / recent20vol.length : 1;
+  return {
+    ticker,
+    companyName: meta.longName || meta.shortName || ticker,
+    price: +last.toFixed(2),
+    volume: lastVol,
+    avgVolume20d: Math.floor(avg20vol),
+    volumeRatio: +(lastVol / Math.max(avg20vol, 1)).toFixed(2),
+    bidAskSpreadPct: 0.05, // chart endpoint doesn't expose bid/ask; assume tight for liquid names
+    rsi14: computeRSI(closes),
+    ema20: +ema(closes.slice(-20), 20).toFixed(2),
+    impliedVolatility: 0.3, // not available without options chain; use a neutral default
+    shortInterestRatio: 0,
+    earningsDaysAway: -1,
+    isReal: true,
+  };
+}
+
+// Throttled batch fetch to avoid hammering Yahoo (which will start dropping requests).
+async function batchFetch<T>(items: string[], worker: (s: string) => Promise<T>, concurrency = 6): Promise<T[]> {
+  const out: T[] = new Array(items.length);
+  let idx = 0;
+  async function next() {
+    while (idx < items.length) {
+      const i = idx++;
+      out[i] = await worker(items[i]);
+    }
   }
+  await Promise.all(Array.from({ length: concurrency }, next));
+  return out;
+}
+
+export async function getQuotes(tickers: string[]): Promise<Quote[]> {
+  const results = await batchFetch(tickers, async t => {
+    const chart = await fetchChart(t);
+    return chart ? chartToQuote(t, chart) : mockQuote(t);
+  });
+  return results;
+}
+
+export async function getDetailedQuote(ticker: string): Promise<Quote> {
+  const chart = await fetchChart(ticker);
+  if (!chart) return mockQuote(ticker);
+  const q = chartToQuote(ticker, chart);
+  q.earningsDaysAway = await getEarningsDaysAway(ticker);
+  return q;
 }
 
 export async function getQuote(ticker: string): Promise<Quote> {
-  const [q] = await getQuotes([ticker]);
-  return q || mockQuote(ticker);
+  return getDetailedQuote(ticker);
 }
 
 // Market implied probability proxy from price momentum + IV.
 export function impliedProbability(q: Quote): number {
-  const momentum = (q.price - q.ema20) / q.ema20;
+  const momentum = (q.price - q.ema20) / Math.max(q.ema20, 1);
   return Math.max(0.05, Math.min(0.95, 0.5 + momentum * 0.4 - q.impliedVolatility * 0.1));
 }
