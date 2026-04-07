@@ -6,7 +6,14 @@ let yfPromise: Promise<any> | null = null;
 async function getYF(): Promise<any> {
   if (!yfPromise) {
     yfPromise = import('yahoo-finance2').then((m: any) => {
-      const yf = m.default || m;
+      // ESM-via-CJS interop can nest the default export. Try every plausible shape.
+      const candidates = [m?.default?.default, m?.default, m];
+      const yf = candidates.find(c => c && typeof c.quote === 'function');
+      if (!yf) {
+        console.warn('[yahoo] could not locate .quote() on module. Keys:',
+          Object.keys(m || {}), 'default keys:', Object.keys(m?.default || {}));
+        return null;
+      }
       try { yf.suppressNotices?.(['ripHistorical', 'yahooSurvey']); } catch {}
       return yf;
     }).catch((e: Error) => {
