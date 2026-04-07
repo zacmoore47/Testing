@@ -1,5 +1,7 @@
-import { db } from './schema';
+import { db, initSchema } from './schema';
 import { randomUUID } from 'crypto';
+
+initSchema();
 
 export const now = () => Date.now();
 export const uid = () => randomUUID();
