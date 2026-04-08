@@ -1,7 +1,7 @@
 import { FilteredStock } from './filterAgent';
 import { getResearchByTicker, insertPrediction, insertAlert, uid, now, getLatestWeights } from '../db/queries';
 import { callClaudeJSON } from '../services/claudeService';
-import { impliedProbability, getDetailedQuote } from '../services/marketDataService';
+import { impliedProbability } from '../services/marketDataService';
 
 export interface FeatureVector {
   sentimentScore: number;
@@ -104,8 +104,8 @@ async function llmCalibrate(ticker: string, f: FeatureVector, price: number, bas
     rationale: `Mock calibration: feature-based logistic output for ${ticker}.`,
   };
   return callClaudeJSON<LLMResult>(
-    'You are a quantitative analyst.',
-    `Given the following signals for ${ticker} (price $${price}), estimate probability the stock is higher in 5 trading days.\nFeatures: ${JSON.stringify(f)}\nReturn: { "probability": 0.XX, "confidence": "HIGH|MEDIUM|LOW", "keyFactors": ["..."], "riskFactors": ["..."], "suggestedEntry": XX.XX, "suggestedStopLoss": XX.XX, "rationale": "..." }`,
+    'You are a quantitative analyst. You analyze signals only — you do NOT invent prices. Use ONLY the exact price provided in the prompt as ground truth; never guess based on training data.',
+    `Ticker: ${ticker}\nCURRENT PRICE (authoritative, do not override): $${price}\nFeature vector: ${JSON.stringify(f)}\n\nEstimate the probability this stock is higher in 5 trading days. For suggestedEntry, return a value within 0.5% of $${price}. For suggestedStopLoss, return a value 5% below $${price}.\n\nRespond as: { "probability": 0.XX, "confidence": "HIGH|MEDIUM|LOW", "keyFactors": ["..."], "riskFactors": ["..."], "suggestedEntry": ${(price * 0.998).toFixed(2)}, "suggestedStopLoss": ${(price * 0.95).toFixed(2)}, "rationale": "..." }`,
     fallback
   );
 }
@@ -113,11 +113,9 @@ async function llmCalibrate(ticker: string, f: FeatureVector, price: number, bas
 export async function runPredict(filtered: FilteredStock[]) {
   const weights = loadWeights();
   const top = filtered.slice(0, 15);
-  // Enrich top candidates with real RSI/earnings/short interest from Yahoo + Finnhub.
-  await Promise.all(top.map(async s => {
-    try { s.quote = await getDetailedQuote(s.ticker); s.currentPrice = s.quote.price || s.currentPrice; }
-    catch {}
-  }));
+  // NOTE: we do NOT re-fetch detailed quotes here. The filter stage already has real
+  // Finnhub prices; re-fetching would exceed the 60/min free tier rate limit and the
+  // fallback to mock data would poison the alert prices. RSI/EMA stay as filter-stage defaults.
   const predictions = await Promise.all(top.map(async s => {
     const f = buildFeatures(s);
     const llm = await llmCalibrate(s.ticker, f, s.currentPrice, s.currentPrice);
@@ -126,11 +124,16 @@ export async function runPredict(filtered: FilteredStock[]) {
     const edge = +(llmProb - mktProb).toFixed(4);
     const id = uid();
     const ts = now();
-    const targetPrice = +(s.currentPrice * (1 + edge * 2)).toFixed(2);
+    // Anchor ALL prices to the real current price from Finnhub — never trust Claude's
+    // suggested prices, which often come from its training data, not the live quote.
+    const realPrice = s.currentPrice;
+    const entryPrice = +(realPrice * 0.998).toFixed(2);
+    const stopLoss = +(realPrice * 0.95).toFixed(2);
+    const targetPrice = +(realPrice * (1 + Math.max(0.05, edge * 2))).toFixed(2);
     insertPrediction.run(
       id, s.ticker, JSON.stringify(f), llmProb, mktProb, edge, llm.confidence,
       JSON.stringify(llm.keyFactors), JSON.stringify(llm.riskFactors), llm.rationale,
-      llm.suggestedEntry, llm.suggestedStopLoss, targetPrice, ts
+      entryPrice, stopLoss, targetPrice, ts
     );
 
     if (edge > 0.08) {
@@ -139,10 +142,10 @@ export async function runPredict(filtered: FilteredStock[]) {
         ticker: s.ticker,
         companyName: s.companyName,
         action: 'BUY' as const,
-        currentPrice: s.currentPrice,
-        suggestedEntryPrice: llm.suggestedEntry,
-        suggestedEntryRange: [+(llm.suggestedEntry * 0.995).toFixed(2), +(llm.suggestedEntry * 1.005).toFixed(2)] as [number, number],
-        stopLoss: llm.suggestedStopLoss,
+        currentPrice: realPrice,
+        suggestedEntryPrice: entryPrice,
+        suggestedEntryRange: [+(entryPrice * 0.995).toFixed(2), +(entryPrice * 1.005).toFixed(2)] as [number, number],
+        stopLoss,
         targetPrice,
         positionSizePercent: +(Math.min(10, edge * 50)).toFixed(1),
         timeHorizon: '5D' as const,
