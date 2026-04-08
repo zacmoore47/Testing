@@ -1,4 +1,9 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import path from 'path';
+// Load .env from backend dir first, then project root as fallback
+dotenv.config({ path: path.join(__dirname, '../.env') });
+dotenv.config({ path: path.join(__dirname, '../../.env') });
+dotenv.config(); // also current working directory
 import express from 'express';
 import cors from 'cors';
 import cron from 'node-cron';
@@ -12,6 +17,13 @@ import { runResearch, lastRun } from './agents/researchAgent';
 import { runFilter } from './agents/filterAgent';
 import { runPredict } from './agents/predictAgent';
 import { filterCache } from './routes/filter';
+
+console.log('[env] loaded from:', path.join(__dirname, '../.env'));
+console.log('[env] sources detected:');
+console.log('  ANTHROPIC_API_KEY:', process.env.ANTHROPIC_API_KEY ? `SET (${process.env.ANTHROPIC_API_KEY.slice(0, 12)}...)` : 'MISSING');
+console.log('  FINNHUB_API_KEY:  ', process.env.FINNHUB_API_KEY ? `SET (${process.env.FINNHUB_API_KEY.slice(0, 12)}...)` : 'MISSING');
+console.log('  REDDIT_CLIENT_ID: ', process.env.REDDIT_CLIENT_ID ? 'SET' : 'MISSING');
+console.log('  TWITTER_BEARER:   ', process.env.TWITTER_BEARER_TOKEN ? 'SET' : 'MISSING');
 
 initSchema();
 
