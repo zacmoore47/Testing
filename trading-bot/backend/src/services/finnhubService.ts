@@ -25,18 +25,29 @@ export interface FinnhubQuote {
   t: number;  // timestamp
 }
 
+let fhDebug = 0;
 export async function getFinnhubQuote(ticker: string): Promise<FinnhubQuote | null> {
-  if (!KEY()) return null;
+  if (!KEY()) { if (fhDebug++ < 1) console.warn('[finnhub] no key'); return null; }
   const cached = quoteCache.get(ticker);
   if (cached && Date.now() - cached.ts < QUOTE_TTL) return cached.data;
   try {
     const r = await fetch(`${BASE}/quote?symbol=${ticker}&token=${KEY()}`);
-    if (!r.ok) return null;
+    if (!r.ok) {
+      if (fhDebug++ < 3) console.warn(`[finnhub] ${ticker} HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
+      return null;
+    }
     const data: any = await r.json();
-    if (typeof data?.c !== 'number' || data.c === 0) return null;
+    if (fhDebug++ < 2) console.log(`[finnhub] ${ticker} raw:`, JSON.stringify(data));
+    if (typeof data?.c !== 'number' || data.c === 0) {
+      if (fhDebug++ < 3) console.warn(`[finnhub] ${ticker} bad price: c=${data?.c}`);
+      return null;
+    }
     quoteCache.set(ticker, { ts: Date.now(), data });
     return data;
-  } catch { return null; }
+  } catch (e) {
+    if (fhDebug++ < 3) console.warn(`[finnhub] ${ticker} threw:`, (e as Error).message);
+    return null;
+  }
 }
 
 export async function getFinnhubProfile(ticker: string): Promise<string | null> {
