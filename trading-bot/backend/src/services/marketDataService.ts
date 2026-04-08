@@ -1,9 +1,6 @@
-// Real market data via Stooq (free, no auth, batched). Yahoo fallback.
-// Stooq supports comma-separated tickers in one call:
-//   https://stooq.com/q/l/?s=msft.us,aapl.us&f=sd2t2ohlcvn&h&e=csv
-// And daily history per ticker:
-//   https://stooq.com/q/d/l/?s=msft.us&i=d
-import { getEarningsDaysAway } from './finnhubService';
+// Real market data via Finnhub (requires free API key from https://finnhub.io/register).
+// Falls back to seeded mock data if FINNHUB_API_KEY is not set.
+import { getEarningsDaysAway, getFinnhubQuote, getFinnhubProfile, getFinnhubCandles, finnhubEnabled } from './finnhubService';
 
 export interface Quote {
   ticker: string;
@@ -20,16 +17,6 @@ export interface Quote {
   earningsDaysAway: number;
   isReal: boolean;
 }
-
-const HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-  'Accept': 'text/csv,application/json,*/*',
-};
-
-// 5-minute in-memory cache so re-runs don't hammer external sources.
-const TTL = 5 * 60_000;
-const snapshotCache = new Map<string, { ts: number; q: Quote }>();
-const historyCache = new Map<string, { ts: number; closes: number[]; volumes: number[] }>();
 
 function seeded(ticker: string, salt = 0) {
   let h = salt;
@@ -83,128 +70,58 @@ function ema(values: number[], period: number): number {
   return prev;
 }
 
-function toStooq(t: string): string {
-  return `${t.toLowerCase().replace('.', '-').replace('-', '-')}.us`;
-}
-
-// Stooq batched snapshot — one HTTP call returns OHLCV for many symbols.
-let stooqDebugCount = 0;
-async function fetchStooqSnapshot(tickers: string[]): Promise<Map<string, Quote>> {
-  const out = new Map<string, Quote>();
-  if (!tickers.length) return out;
-  const symbols = tickers.map(toStooq).join(',');
-  const url = `https://stooq.com/q/l/?s=${symbols}&f=sd2t2ohlcvn&h&e=csv`;
-  try {
-    const r = await fetch(url, { headers: HEADERS });
-    if (!r.ok) {
-      console.warn(`[stooq] HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`);
-      return out;
-    }
-    const csv = await r.text();
-    if (stooqDebugCount++ < 1) {
-      console.log(`[stooq] sample response (${csv.length} bytes):\n${csv.slice(0, 400)}`);
-    }
-    const lines = csv.replace(/\r/g, '').trim().split('\n');
-    if (lines.length < 2) {
-      console.warn(`[stooq] response has only ${lines.length} lines`);
-      return out;
-    }
-    for (const line of lines.slice(1)) {
-      const cols = line.split(',');
-      if (cols.length < 9) continue;
-      const symbol = cols[0].replace(/\.us$/i, '').toUpperCase().replace('-', '.');
-      const open = parseFloat(cols[3]);
-      const high = parseFloat(cols[4]);
-      const low = parseFloat(cols[5]);
-      const close = parseFloat(cols[6]);
-      const volume = parseFloat(cols[7]);
-      const name = cols.slice(8).join(',').replace(/^"|"$/g, '');
-      if (isNaN(close) || close === 0) continue;
-      out.set(symbol, {
-        ticker: symbol,
-        companyName: name || symbol,
-        price: close,
-        volume: isNaN(volume) ? 0 : volume,
-        avgVolume20d: isNaN(volume) ? 1 : volume,
-        volumeRatio: 1,
-        bidAskSpreadPct: +(((high - low) / Math.max(close, 1)) * 100).toFixed(3),
-        rsi14: 50,
-        ema20: open || close,
-        impliedVolatility: 0.3,
-        shortInterestRatio: 0,
-        earningsDaysAway: -1,
-        isReal: true,
-      });
-    }
-  } catch (e) {
-    console.warn('[stooq] snapshot threw:', (e as Error).message);
+// Throttled fetch — Finnhub free tier is 60 calls/minute. We use ~150ms gaps to stay safely under.
+async function throttled<T>(items: string[], worker: (s: string) => Promise<T>, gapMs = 150): Promise<T[]> {
+  const results: T[] = [];
+  for (const item of items) {
+    results.push(await worker(item));
+    if (gapMs > 0) await new Promise(r => setTimeout(r, gapMs));
   }
-  return out;
+  return results;
 }
 
-// Stooq daily history for one ticker. Used in Predict stage to compute real RSI + EMA + 20d avg volume.
-let stooqHistErr = 0;
-async function fetchStooqHistory(ticker: string): Promise<{ closes: number[]; volumes: number[] } | null> {
-  const cached = historyCache.get(ticker);
-  if (cached && Date.now() - cached.ts < TTL) return { closes: cached.closes, volumes: cached.volumes };
-  try {
-    const r = await fetch(`https://stooq.com/q/d/l/?s=${toStooq(ticker)}&i=d`, { headers: HEADERS });
-    if (!r.ok) return null;
-    const csv = await r.text();
-    if (!csv.startsWith('Date,')) return null;
-    const lines = csv.trim().split('\n').slice(1);
-    const closes: number[] = [];
-    const volumes: number[] = [];
-    for (const line of lines) {
-      const [, , , , close, volume] = line.split(',');
-      const c = parseFloat(close);
-      const v = parseFloat(volume);
-      if (!isNaN(c)) closes.push(c);
-      if (!isNaN(v)) volumes.push(v);
-    }
-    const trimmed = { closes: closes.slice(-60), volumes: volumes.slice(-60) };
-    historyCache.set(ticker, { ts: Date.now(), ...trimmed });
-    return trimmed;
-  } catch (e) {
-    if (stooqHistErr++ < 3) console.warn(`[stooq] history ${ticker}:`, (e as Error).message);
-    return null;
-  }
+async function quoteFromFinnhub(ticker: string): Promise<Quote | null> {
+  const q = await getFinnhubQuote(ticker);
+  if (!q) return null;
+  const name = (await getFinnhubProfile(ticker)) || ticker;
+  return {
+    ticker,
+    companyName: name,
+    price: +q.c.toFixed(2),
+    volume: 0, // Finnhub /quote doesn't return volume; refined in detailed step via /candle if available
+    avgVolume20d: 1,
+    volumeRatio: 1,
+    bidAskSpreadPct: +(((q.h - q.l) / Math.max(q.c, 1)) * 100).toFixed(3),
+    rsi14: 50,
+    ema20: q.o || q.c,
+    impliedVolatility: 0.3,
+    shortInterestRatio: 0,
+    earningsDaysAway: -1,
+    isReal: true,
+  };
 }
 
-// Public: batched quotes for the Filter stage. Uses cache + chunked Stooq calls.
-const CHUNK = 25;
 export async function getQuotes(tickers: string[]): Promise<Quote[]> {
-  console.log(`[market] getQuotes(${tickers.length} tickers)`);
-  const now = Date.now();
-  const need: string[] = [];
-  const cached = new Map<string, Quote>();
-  for (const t of tickers) {
-    const c = snapshotCache.get(t);
-    if (c && now - c.ts < TTL) cached.set(t, c.q);
-    else need.push(t);
+  console.log(`[market] getQuotes(${tickers.length} tickers) — finnhub=${finnhubEnabled()}`);
+  if (!finnhubEnabled()) {
+    console.warn('[market] FINNHUB_API_KEY missing — returning mock data. Get a free key at https://finnhub.io/register');
+    return tickers.map(mockQuote);
   }
-  console.log(`[market] cached=${cached.size} fetching=${need.length}`);
-  let realCount = 0;
-  for (let i = 0; i < need.length; i += CHUNK) {
-    const chunk = need.slice(i, i + CHUNK);
-    const got = await fetchStooqSnapshot(chunk);
-    console.log(`[market] stooq chunk ${i / CHUNK + 1}: parsed ${got.size}/${chunk.length}`);
-    for (const t of chunk) {
-      const q = got.get(t) || mockQuote(t);
-      if (q.isReal) realCount++;
-      snapshotCache.set(t, { ts: now, q });
-      cached.set(t, q);
-    }
-  }
-  console.log(`[market] result: ${realCount} real, ${tickers.length - realCount} mock`);
-  return tickers.map(t => cached.get(t) || mockQuote(t));
+  const results = await throttled(tickers, async t => {
+    const q = await quoteFromFinnhub(t);
+    return q || mockQuote(t);
+  });
+  const real = results.filter(q => q.isReal).length;
+  console.log(`[market] result: ${real} real, ${tickers.length - real} mock`);
+  return results;
 }
 
-// Public: detailed quote with real RSI + EMA + earnings. Used in Predict for top candidates.
 export async function getDetailedQuote(ticker: string): Promise<Quote> {
-  const [base, hist, earningsDays] = await Promise.all([
-    (async () => (await getQuotes([ticker]))[0])(),
-    fetchStooqHistory(ticker),
+  const base = (await quoteFromFinnhub(ticker)) || mockQuote(ticker);
+  // Try to enrich with historical data for real RSI/EMA/volume.
+  // Free-tier /candle is sometimes restricted; we silently skip if it fails.
+  const [hist, earningsDays] = await Promise.all([
+    getFinnhubCandles(ticker),
     getEarningsDaysAway(ticker),
   ]);
   if (hist && hist.closes.length) {
@@ -213,6 +130,7 @@ export async function getDetailedQuote(ticker: string): Promise<Quote> {
     const vols = hist.volumes.slice(-20);
     if (vols.length) {
       base.avgVolume20d = Math.floor(vols.reduce((a, b) => a + b, 0) / vols.length);
+      base.volume = vols[vols.length - 1] || 0;
       base.volumeRatio = +(base.volume / Math.max(base.avgVolume20d, 1)).toFixed(2);
     }
   }
@@ -224,7 +142,6 @@ export async function getQuote(ticker: string): Promise<Quote> {
   return getDetailedQuote(ticker);
 }
 
-// Market implied probability proxy.
 export function impliedProbability(q: Quote): number {
   const momentum = (q.price - q.ema20) / Math.max(q.ema20, 1);
   return Math.max(0.05, Math.min(0.95, 0.5 + momentum * 0.4 - q.impliedVolatility * 0.1));

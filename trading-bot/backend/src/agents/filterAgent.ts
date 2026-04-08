@@ -29,8 +29,9 @@ export async function runFilter(): Promise<FilteredStock[]> {
     if (q.earningsDaysAway >= 0 && q.earningsDaysAway <= 14) passed.push('catalyst');
     if (q.bidAskSpreadPct < 0.5) passed.push('spread');
     if ((researchMap.get(q.ticker) || 0) >= 1) passed.push('research_signal');
+    if (q.isReal) passed.push('real_data');
 
-    if (passed.length < 3) continue;
+    if (passed.length < 2) continue;
 
     const priorityScore = Math.min(100,
       passed.length * 15 +
