@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
@@ -44,8 +45,17 @@ app.get('/api/config/:companyId', (req, res) => {
   res.json(publicConfig);
 });
 
+// --- Rate limiting ---
+const chatLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000, // 10 minutes
+  max: 20,                   // 20 messages per IP per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many messages. Please wait a few minutes and try again.' },
+});
+
 // --- Chat endpoint with streaming ---
-app.post('/api/chat', async (req, res) => {
+app.post('/api/chat', chatLimiter, async (req, res) => {
   const { companyId, messages } = req.body;
 
   if (!companyId || !Array.isArray(messages)) {
