@@ -241,7 +241,7 @@
           </button>
         </div>
 
-        <div id="__chatbot_branding__">Powered by AI</div>
+        <div id="__chatbot_branding__">Powered by ZM</div>
       </div>
     `;
 
