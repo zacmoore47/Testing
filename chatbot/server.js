@@ -11,8 +11,10 @@ const app = express();
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // --- CORS ---
-// In production, replace with: origin: process.env.ALLOWED_ORIGINS?.split(',')
-app.use(cors({ origin: '*' }));
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+  ? process.env.ALLOWED_ORIGINS.split(',').map(o => o.trim())
+  : '*';
+app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 // --- Company config loader ---
