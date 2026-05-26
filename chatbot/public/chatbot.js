@@ -103,12 +103,12 @@
       }
       #__chatbot_header__ .cb-name { font-weight: 600; font-size: 15px; flex: 1; }
       #__chatbot_header__ .cb-status { font-size: 11px; opacity: 0.8; }
-      #__chatbot_close__ {
+      #__chatbot_close__, #__chatbot_reset__ {
         background: none; border: none; color: white; cursor: pointer;
         padding: 4px; border-radius: 6px; opacity: 0.8; line-height: 1;
         transition: opacity 0.15s;
       }
-      #__chatbot_close__:hover { opacity: 1; }
+      #__chatbot_close__:hover, #__chatbot_reset__:hover { opacity: 1; }
 
       #__chatbot_messages__ {
         flex: 1; overflow-y: auto; padding: 16px 12px;
@@ -215,6 +215,11 @@
             <div class="cb-name">${escapeHtml(config.botName)}</div>
             <div class="cb-status">Online · Typically replies instantly</div>
           </div>
+          <button id="__chatbot_reset__" aria-label="New conversation" title="New conversation">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>
+            </svg>
+          </button>
           <button id="__chatbot_close__" aria-label="Close chat">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
               <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/>
@@ -245,6 +250,7 @@
     // Wire up events
     document.getElementById('__chatbot_btn__').addEventListener('click', toggleWindow);
     document.getElementById('__chatbot_close__').addEventListener('click', closeWindow);
+    document.getElementById('__chatbot_reset__').addEventListener('click', resetConversation);
 
     const input = document.getElementById('__chatbot_input__');
     const sendBtn = document.getElementById('__chatbot_send__');
@@ -293,6 +299,13 @@
       <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" fill="white">
         <path d="M20 2H4a2 2 0 00-2 2v12a2 2 0 002 2h4l4 4 4-4h4a2 2 0 002-2V4a2 2 0 00-2-2z"/>
       </svg>`;
+  }
+
+  function resetConversation() {
+    if (isLoading) return;
+    messages.length = 0;
+    document.getElementById('__chatbot_messages__').innerHTML = '';
+    addMessage('assistant', config.welcomeMessage);
   }
 
   // ── Message rendering ─────────────────────────────────────────────────────
