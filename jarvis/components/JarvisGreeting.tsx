@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { Volume2, VolumeX, RotateCcw } from "lucide-react";
 import { useJarvisVoice } from "@/hooks/useJarvisVoice";
 
@@ -29,29 +29,20 @@ async function fetchWeatherLine(): Promise<string> {
 }
 
 function buildGreeting(tod: string, weatherLine: string, taskTitle: string | null): string {
-  const task =
-    taskTitle
-      ? `Your highest priority task today is: ${taskTitle}.`
-      : "You have no pending tasks. A rare and beautiful sight, Sir.";
-  const parts = [`Good ${tod}, Sir.`, weatherLine, task].filter(Boolean);
-  return parts.join(" ");
+  const task = taskTitle
+    ? `Your highest priority task today is: ${taskTitle}.`
+    : "You have no pending tasks. A rare and beautiful sight, Sir.";
+  return [`Good ${tod}, Sir.`, weatherLine, task].filter(Boolean).join(" ");
 }
 
 export function JarvisGreeting({ topTaskTitle }: Props) {
   const { isMuted, isSpeaking, toggleMute, speak, replay } = useJarvisVoice();
-  const [showBanner, setShowBanner] = useState(false);
   const greetingRef = useRef<string>("");
   const hasAttempted = useRef(false);
+  const pendingRef = useRef<string>("");
 
-  const attemptGreeting = useCallback(
-    async (text: string) => {
-      try {
-        await speak(text);
-        setShowBanner(false);
-      } catch {
-        setShowBanner(true);
-      }
-    },
+  const doSpeak = useCallback(
+    (text: string) => { void speak(text); },
     [speak]
   );
 
@@ -62,42 +53,63 @@ export function JarvisGreeting({ topTaskTitle }: Props) {
     if (hasAttempted.current) return;
     hasAttempted.current = true;
 
-    const tod = getTimeOfDayWord();
-
     fetchWeatherLine().then((weatherLine) => {
-      const text = buildGreeting(tod, weatherLine, topTaskTitle);
+      const text = buildGreeting(getTimeOfDayWord(), weatherLine, topTaskTitle);
       greetingRef.current = text;
-
       sessionStorage.setItem(GREETED_KEY, "1");
 
-      // Short delay to let browser unlock audio context after user navigation
-      setTimeout(() => {
-        attemptGreeting(text);
-      }, 600);
-    });
-  }, [isMuted, topTaskTitle, attemptGreeting]);
+      // Try immediately — works when the user navigated here via a link (user gesture)
+      const tryNow = () => {
+        window.speechSynthesis.cancel();
+        const test = new SpeechSynthesisUtterance("");
+        window.speechSynthesis.speak(test);
+        // Give the browser one tick to accept the request
+        setTimeout(() => {
+          if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+            window.speechSynthesis.cancel();
+            doSpeak(text);
+          } else {
+            // Browser blocked it — wait for first natural interaction
+            pendingRef.current = text;
+          }
+        }, 100);
+      };
 
-  const handleBannerClick = useCallback(() => {
-    setShowBanner(false);
-    void speak(greetingRef.current);
-  }, [speak]);
+      setTimeout(tryNow, 400);
+    });
+  }, [isMuted, topTaskTitle, doSpeak]);
+
+  // Attach one-time interaction listeners to fire the deferred greeting
+  useEffect(() => {
+    const EVENTS = ["mousemove", "pointerdown", "keydown", "touchstart"] as const;
+
+    function onInteraction() {
+      if (!pendingRef.current) return;
+      const text = pendingRef.current;
+      pendingRef.current = "";
+      EVENTS.forEach((e) => window.removeEventListener(e, onInteraction));
+      doSpeak(text);
+    }
+
+    EVENTS.forEach((e) => window.addEventListener(e, onInteraction, { once: true, passive: true }));
+    return () => EVENTS.forEach((e) => window.removeEventListener(e, onInteraction));
+  }, [doSpeak]);
 
   const handleReplay = useCallback(() => {
-    if (!greetingRef.current) {
-      const tod = getTimeOfDayWord();
-      fetchWeatherLine().then((weatherLine) => {
-        const text = buildGreeting(tod, weatherLine, topTaskTitle);
-        greetingRef.current = text;
-        replay(text);
-      });
+    const text = greetingRef.current;
+    if (text) {
+      replay(text);
     } else {
-      replay(greetingRef.current);
+      fetchWeatherLine().then((weatherLine) => {
+        const t = buildGreeting(getTimeOfDayWord(), weatherLine, topTaskTitle);
+        greetingRef.current = t;
+        replay(t);
+      });
     }
   }, [topTaskTitle, replay]);
 
   return (
     <>
-      {/* Controls row */}
       <div className="flex items-center gap-2">
         {isSpeaking && (
           <div className="flex items-center gap-1 mr-1" aria-label="Speaking">
@@ -128,23 +140,6 @@ export function JarvisGreeting({ topTaskTitle }: Props) {
           {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
         </button>
       </div>
-
-      {/* Autoplay banner */}
-      {showBanner && (
-        <div
-          onClick={handleBannerClick}
-          className="fixed bottom-20 left-1/2 -translate-x-1/2 z-50 cursor-pointer rounded-xl border border-blue-500/30 bg-zinc-900/95 backdrop-blur px-5 py-3 text-sm text-zinc-300 shadow-2xl flex items-center gap-3"
-        >
-          <Volume2 className="h-4 w-4 text-blue-400 shrink-0" />
-          <span>Tap anywhere to activate Jarvis voice greeting</span>
-          <button
-            onClick={(e) => { e.stopPropagation(); setShowBanner(false); }}
-            className="ml-2 text-zinc-500 hover:text-zinc-300"
-          >
-            ✕
-          </button>
-        </div>
-      )}
 
       <style>{`
         @keyframes pulse-bar {
