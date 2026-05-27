@@ -4,9 +4,11 @@ import { SectorCard } from "@/components/dashboard/SectorCard";
 import { FocusCard } from "@/components/dashboard/FocusCard";
 import { StreakIndicator } from "@/components/dashboard/StreakIndicator";
 import { HabitTracker } from "@/components/dashboard/HabitTracker";
+import { PriorityTasksWidget } from "@/components/tasks/PriorityTasksWidget";
+import { JarvisGreeting } from "@/components/JarvisGreeting";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { SectorCardData, SectorName, SparklineData } from "@/types";
+import { SectorCardData, SectorName, SparklineData, TaskRow } from "@/types";
 import { format, subDays, startOfDay, endOfDay, differenceInDays } from "date-fns";
 import Link from "next/link";
 import { Plus } from "lucide-react";
@@ -15,7 +17,7 @@ async function getDashboardData() {
   const today = startOfDay(new Date());
   const cutoff = subDays(today, 30);
 
-  const [logs, todayExpenses, todayIncome, todayProjectLogs] = await Promise.all([
+  const [logs, todayExpenses, todayIncome, todayProjectLogs, pendingTasks] = await Promise.all([
     prisma.dailyLog.findMany({
       where: { date: { gte: cutoff } },
       include: {
@@ -31,9 +33,15 @@ async function getDashboardData() {
       include: { project: { select: { name: true } } },
       orderBy: { createdAt: "desc" },
     }),
+    prisma.task.findMany({
+      where: { status: { in: ["Pending", "InProgress"] } },
+      include: { project: { select: { name: true } } },
+      orderBy: [{ priority: "asc" }, { dueDate: "asc" }, { createdAt: "asc" }],
+      take: 5,
+    }),
   ]);
 
-  return { logs, todayExpenses, todayIncome, todayProjectLogs };
+  return { logs, todayExpenses, todayIncome, todayProjectLogs, pendingTasks };
 }
 
 function buildSectorCards(
@@ -137,7 +145,7 @@ function getTimeOfDay() {
 }
 
 export default async function DashboardPage() {
-  const { logs, todayExpenses, todayIncome, todayProjectLogs } = await getDashboardData();
+  const { logs, todayExpenses, todayIncome, todayProjectLogs, pendingTasks } = await getDashboardData();
   const todayLog = logs.find((l) => format(l.date, "yyyy-MM-dd") === format(new Date(), "yyyy-MM-dd"));
   const overallScore = todayLog?.dailyScore?.overallScore ?? 0;
   const sectorCards = buildSectorCards(logs, todayExpenses, todayIncome, todayProjectLogs);
@@ -146,15 +154,34 @@ export default async function DashboardPage() {
   const hasDataToday = !!todayLog;
   const warnings = todayLog?.dailyScore?.warnings ? JSON.parse(todayLog.dailyScore.warnings) : [];
 
+  const topTaskTitle = pendingTasks[0]?.title ?? null;
+
+  const serializedPendingTasks: TaskRow[] = pendingTasks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    description: t.description,
+    priority: t.priority,
+    status: t.status as TaskRow["status"],
+    dueDate: t.dueDate?.toISOString() ?? null,
+    projectId: t.projectId,
+    projectName: t.project?.name ?? null,
+    estimatedMinutes: t.estimatedMinutes,
+    completedAt: t.completedAt?.toISOString() ?? null,
+    createdAt: t.createdAt.toISOString(),
+    updatedAt: t.updatedAt.toISOString(),
+    order: t.order,
+  }));
+
   return (
     <div className="space-y-8">
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Good {getTimeOfDay()}, chief.</h1>
+          <h1 className="text-2xl font-bold">Good {getTimeOfDay()}, Sir.</h1>
           <p className="text-zinc-400 text-sm">{format(new Date(), "EEEE, MMMM d, yyyy")}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          <JarvisGreeting topTaskTitle={topTaskTitle} />
           <Link href="/projects">
             <Button variant="outline" className="gap-2 hidden sm:flex">🚀 Projects</Button>
           </Link>
@@ -207,6 +234,9 @@ export default async function DashboardPage() {
           </Card>
         )}
       </div>
+
+      {/* Priority Tasks */}
+      <PriorityTasksWidget initialTasks={serializedPendingTasks} />
 
       {/* Habit tracker */}
       <HabitTracker />

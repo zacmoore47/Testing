@@ -1,6 +1,6 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import { subDays, startOfDay, format } from "date-fns";
+import { subDays, addDays, startOfDay, format } from "date-fns";
 import path from "path";
 
 const dbPath = path.resolve(__dirname, "dev.db");
@@ -205,6 +205,49 @@ async function main() {
 
     console.log(`  ✓ Day ${14 - i} seeded (${dateStr}) — sleep: ${sleepHours}h, score: ${overall}`);
   }
+
+  // ── Tasks ─────────────────────────────────────────────────────────────────
+  const today = startOfDay(new Date());
+  const taskData = [
+    // Overdue tasks
+    { title: "Finish Q4 investor proposal", priority: 1, status: "Pending", dueDate: subDays(today, 3), projectId: projects[0].id, estimatedMinutes: 120, description: "Deck + financial projections for seed round" },
+    { title: "Fix checkout bug on mobile", priority: 1, status: "Pending", dueDate: subDays(today, 1), projectId: projects[0].id, estimatedMinutes: 60, description: "Stripe webhook not firing on iOS Safari" },
+    // Due today
+    { title: "Record intro video for YouTube channel", priority: 2, status: "Pending", dueDate: today, projectId: projects[1].id, estimatedMinutes: 90 },
+    // InProgress
+    { title: "Build onboarding email sequence", priority: 2, status: "InProgress", dueDate: addDays(today, 2), projectId: projects[0].id, estimatedMinutes: 180 },
+    { title: "Cold outreach — 20 leads this week", priority: 2, status: "InProgress", dueDate: addDays(today, 4), projectId: projects[2].id, estimatedMinutes: 60 },
+    // Upcoming pending
+    { title: "Set up CI/CD pipeline", priority: 3, status: "Pending", dueDate: addDays(today, 3), projectId: projects[0].id, estimatedMinutes: 90 },
+    { title: "Write blog post: how I built the MVP in 4 weeks", priority: 3, status: "Pending", dueDate: addDays(today, 5), projectId: projects[1].id, estimatedMinutes: 120 },
+    { title: "Book accountant for tax review", priority: 3, status: "Pending", dueDate: addDays(today, 7), estimatedMinutes: 30 },
+    { title: "Update pricing page copy", priority: 4, status: "Pending", dueDate: addDays(today, 10), projectId: projects[0].id, estimatedMinutes: 45 },
+    { title: "Research podcast outreach strategy", priority: 4, status: "Pending", projectId: projects[1].id, estimatedMinutes: 60 },
+    // Backlog
+    { title: "Refactor auth module", priority: 5, status: "Pending", projectId: projects[0].id, estimatedMinutes: 120 },
+    { title: "Explore affiliate program ideas", priority: 5, status: "Pending", estimatedMinutes: 45 },
+    // Completed
+    { title: "Set up Stripe billing", priority: 1, status: "Completed", projectId: projects[0].id, completedAt: subDays(today, 2) },
+    { title: "Launch landing page", priority: 2, status: "Completed", projectId: projects[0].id, completedAt: subDays(today, 5) },
+  ];
+
+  for (let i = 0; i < taskData.length; i++) {
+    const t = taskData[i];
+    await prisma.task.create({
+      data: {
+        title: t.title,
+        description: t.description ?? null,
+        priority: t.priority,
+        status: t.status,
+        dueDate: t.dueDate ?? null,
+        projectId: t.projectId ?? null,
+        estimatedMinutes: t.estimatedMinutes ?? null,
+        completedAt: t.completedAt ?? null,
+        order: i,
+      },
+    });
+  }
+  console.log(`   - ${taskData.length} tasks seeded (2 overdue, 1 due today, mix of priorities)`);
 
   console.log("\n✅ Seed complete:");
   console.log(`   - 14 daily logs`);

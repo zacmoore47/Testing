@@ -167,6 +167,7 @@ model Project {
   targetCompletionDate DateTime?
   createdAt            DateTime     @default(now())
   logs                 ProjectLog[]
+  tasks                Task[]
 }
 
 model ProjectLog {
@@ -226,8 +227,29 @@ model DailyScore {
   habitScore           Float  @default(0)
   overallScore         Float  @default(0)
 
-  recommendation String?
-  priorityAction String?
-  warnings       String?
-  dataHash       String?
+  recommendation         String?
+  priorityAction         String?
+  warnings               String?
+  topTaskRecommendation  String?
+  dataHash               String?
+}
+
+// ─── Tasks ────────────────────────────────────────────────────────────────
+
+model Task {
+  id               Int       @id @default(autoincrement())
+  title            String
+  description      String?
+  priority         Int       @default(3) // 1=highest, 5=lowest
+  status           String    @default("Pending") // Pending | InProgress | Completed | Cancelled
+  dueDate          DateTime?
+  projectId        Int?
+  project          Project?  @relation(fields: [projectId], references: [id])
+  estimatedMinutes Int?
+  completedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  order            Int       @default(0)
+
+  @@index([status, priority, order])
 }

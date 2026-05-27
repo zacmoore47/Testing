@@ -48,7 +48,8 @@ Output format — return ONLY this JSON, no markdown, no text outside it:
   "overall": number,
   "recommendation": "string — 2-4 sentences, specific and actionable for tomorrow",
   "priorityAction": "string — single most impactful thing to do today/tomorrow",
-  "warnings": ["string"] // 0-3 items, only real concerns worth flagging
+  "warnings": ["string"], // 0-3 items, only real concerns worth flagging
+  "topTaskRecommendation": "string — one sentence on which pending task to tackle first today and why. If a task is overdue, call it out. If no tasks, return empty string."
 }`;
 
 // ─── Daily scoring prompt ─────────────────────────────────────────────────
@@ -56,18 +57,24 @@ Output format — return ONLY this JSON, no markdown, no text outside it:
 export function buildScoringPrompt(
   profile: Record<string, unknown>,
   today: Record<string, unknown>,
-  history: Record<string, unknown>[]
+  history: Record<string, unknown>[],
+  pendingTasks?: Record<string, unknown>[]
 ): string {
+  const taskSection = pendingTasks && pendingTasks.length > 0
+    ? `\n## Pending Tasks (highest priority first)\n${JSON.stringify(pendingTasks, null, 2)}\n`
+    : "\n## Pending Tasks\nNone.\n";
+
   return `## User Goals
 ${JSON.stringify(profile, null, 2)}
 
 ## Today's Data (${today.date})
 ${JSON.stringify(today, null, 2)}
-
+${taskSection}
 ## Last 14 Days Context (oldest first)
 ${JSON.stringify(history, null, 2)}
 
 Score today's performance against the user's goals. Reference historical patterns where relevant.
+In topTaskRecommendation, name the specific task and explain why it should be first today.
 Return only the JSON object.`;
 }
 

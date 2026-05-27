@@ -110,8 +110,27 @@ export async function generateDailyAnalysis(date: Date): Promise<AIAnalysis> {
       recommendation: s.recommendation ?? "",
       priorityAction: s.priorityAction ?? "",
       warnings: s.warnings ? JSON.parse(s.warnings) : [],
+      topTaskRecommendation: s.topTaskRecommendation ?? undefined,
     };
   }
+
+  // Pending tasks (top 5 by priority)
+  const pendingTasks = await prisma.task.findMany({
+    where: { status: { in: ["Pending", "InProgress"] } },
+    include: { project: { select: { name: true } } },
+    orderBy: [{ priority: "asc" }, { dueDate: "asc" }],
+    take: 5,
+  });
+
+  const pendingTasksSerialized = pendingTasks.map((t) => ({
+    title: t.title,
+    priority: t.priority,
+    status: t.status,
+    dueDate: t.dueDate ? format(t.dueDate, "yyyy-MM-dd") : null,
+    project: t.project?.name ?? null,
+    estimatedMinutes: t.estimatedMinutes,
+    createdAt: format(t.createdAt, "yyyy-MM-dd"),
+  }));
 
   // 14-day history logs
   const historyLogs = await prisma.dailyLog.findMany({
@@ -154,7 +173,8 @@ export async function generateDailyAnalysis(date: Date): Promise<AIAnalysis> {
     messages: [{ role: "user", content: buildScoringPrompt(
       profileData as Record<string, unknown>,
       todaySerialized,
-      historySerialized
+      historySerialized,
+      pendingTasksSerialized
     )}],
   });
 
@@ -162,41 +182,28 @@ export async function generateDailyAnalysis(date: Date): Promise<AIAnalysis> {
   const jsonStr = raw.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
   const analysis: AIAnalysis = JSON.parse(jsonStr);
 
+  const scoreFields = {
+    sleepScore: analysis.scores.sleep,
+    workoutScore: analysis.scores.workout,
+    stimulantsScore: analysis.scores.stimulants,
+    macrosScore: analysis.scores.macros,
+    supplementsScore: analysis.scores.supplements,
+    financesScore: analysis.scores.finances,
+    healthScore: analysis.scores.health,
+    entrepreneurialScore: analysis.scores.entrepreneurial,
+    habitScore: analysis.scores.habits,
+    overallScore: analysis.overall,
+    recommendation: analysis.recommendation,
+    priorityAction: analysis.priorityAction,
+    warnings: JSON.stringify(analysis.warnings),
+    topTaskRecommendation: analysis.topTaskRecommendation ?? null,
+    dataHash,
+  };
+
   await prisma.dailyScore.upsert({
     where: { dailyLogId: todayLog.id },
-    create: {
-      dailyLogId: todayLog.id,
-      sleepScore: analysis.scores.sleep,
-      workoutScore: analysis.scores.workout,
-      stimulantsScore: analysis.scores.stimulants,
-      macrosScore: analysis.scores.macros,
-      supplementsScore: analysis.scores.supplements,
-      financesScore: analysis.scores.finances,
-      healthScore: analysis.scores.health,
-      entrepreneurialScore: analysis.scores.entrepreneurial,
-      habitScore: analysis.scores.habits,
-      overallScore: analysis.overall,
-      recommendation: analysis.recommendation,
-      priorityAction: analysis.priorityAction,
-      warnings: JSON.stringify(analysis.warnings),
-      dataHash,
-    },
-    update: {
-      sleepScore: analysis.scores.sleep,
-      workoutScore: analysis.scores.workout,
-      stimulantsScore: analysis.scores.stimulants,
-      macrosScore: analysis.scores.macros,
-      supplementsScore: analysis.scores.supplements,
-      financesScore: analysis.scores.finances,
-      healthScore: analysis.scores.health,
-      entrepreneurialScore: analysis.scores.entrepreneurial,
-      habitScore: analysis.scores.habits,
-      overallScore: analysis.overall,
-      recommendation: analysis.recommendation,
-      priorityAction: analysis.priorityAction,
-      warnings: JSON.stringify(analysis.warnings),
-      dataHash,
-    },
+    create: { dailyLogId: todayLog.id, ...scoreFields },
+    update: scoreFields,
   });
 
   return analysis;

@@ -31,6 +31,7 @@ export interface AIAnalysis {
   recommendation: string;
   priorityAction: string;
   warnings: string[];
+  topTaskRecommendation?: string;
 }
 
 // ─── Daily Log Input ──────────────────────────────────────────────────────
@@ -192,6 +193,42 @@ export interface HabitCompletionRow {
   date: string;
   completed: boolean;
   createdAt: string;
+}
+
+// ─── Tasks ────────────────────────────────────────────────────────────────
+
+export type TaskStatus = "Pending" | "InProgress" | "Completed" | "Cancelled";
+
+export const PRIORITY_LABELS: Record<number, string> = {
+  1: "Critical",
+  2: "High",
+  3: "Medium",
+  4: "Low",
+  5: "Backlog",
+};
+
+export const PRIORITY_COLORS: Record<number, string> = {
+  1: "bg-red-500/20 text-red-400 border-red-500/30",
+  2: "bg-orange-500/20 text-orange-400 border-orange-500/30",
+  3: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+  4: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  5: "bg-zinc-700/50 text-zinc-400 border-zinc-600",
+};
+
+export interface TaskRow {
+  id: number;
+  title: string;
+  description: string | null;
+  priority: number;
+  status: TaskStatus;
+  dueDate: string | null;
+  projectId: number | null;
+  projectName?: string | null;
+  estimatedMinutes: number | null;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  order: number;
 }
 
 // ─── Dashboard cards ──────────────────────────────────────────────────────
