@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model UserProfile {
+  id        Int      @id @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  targetSleepHours      Float  @default(8)
+  targetBedtime         String @default("22:30")
+  targetWaketime        String @default("06:30")
+  targetWorkoutsPerWeek Int    @default(5)
+  targetCaloriesBurned  Float  @default(500)
+  targetProtein         Float  @default(180)
+  targetCarbs           Float  @default(250)
+  targetFats            Float  @default(70)
+  targetCalories        Float  @default(2400)
+  targetWater           Float  @default(100)
+  targetDailyIncome     Float  @default(500)
+  targetMonthlySavings  Float  @default(3000)
+  targetWeight          Float  @default(180)
+  targetDeepWorkHours   Float  @default(4)
+  targetRevenueHoursPerDay Float @default(3)
+  maxCaffeineMg         Float  @default(200)
+  overallGoals          String @default("Optimize performance across all life sectors. Build a successful business while maintaining peak physical and mental health.")
+}
+
+model DailyLog {
+  id        Int      @id @default(autoincrement())
+  date      DateTime @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sleep           Sleep?
+  workout         Workout?
+  stimulants      Stimulants?
+  macros          Macros?
+  supplements     Supplement[]
+  finances        Finances?
+  healthMetrics   HealthMetrics?
+  entrepreneurial Entrepreneurial?
+  dailyScore      DailyScore?
+}
+
+model Sleep {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+
+  hours     Float
+  quality   Int
+  bedtime   String
+  waketime  String
+  remPct    Float?
+  deepPct   Float?
+  hrv       Float?
+  restingHr Int?
+  notes     String?
+}
+
+model Workout {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+
+  type           String
+  duration       Int
+  intensity      Int
+  caloriesBurned Float?
+  muscleGroups   String?
+  notes          String?
+}
+
+model Stimulants {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+
+  caffeineMg   Float  @default(0)
+  nicotineMg   Float  @default(0)
+  other        String?
+  timeConsumed String?
+  notes        String?
+}
+
+model Macros {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+
+  protein   Float
+  carbs     Float
+  fats      Float
+  calories  Float
+  waterOz   Float @default(0)
+  mealCount Int   @default(3)
+  notes     String?
+}
+
+model Supplement {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int
+
+  name  String
+  dose  String
+  time  String?
+  taken Boolean @default(false)
+}
+
+model Finances {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+
+  income            Float  @default(0)
+  spend             Float  @default(0)
+  categories        String?
+  netForDay         Float  @default(0)
+  runningMonthlyNet Float  @default(0)
+  notes             String?
+}
+
+model HealthMetrics {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+
+  weight     Float?
+  bodyFatPct Float?
+  mood       Int?
+  energy     Int?
+  stress     Int?
+  focus      Int?
+  systolic   Int?
+  diastolic  Int?
+  glucose    Float?
+  notes      String?
+}
+
+model Entrepreneurial {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+
+  tasksCompleted       Int    @default(0)
+  deepWorkHours        Float  @default(0)
+  revenueActivityHours Float  @default(0)
+  keyWins              String?
+  blockers             String?
+  projectTags          String?
+  notes                String?
+}
+
+model DailyScore {
+  id         Int      @id @default(autoincrement())
+  dailyLog   DailyLog @relation(fields: [dailyLogId], references: [id], onDelete: Cascade)
+  dailyLogId Int      @unique
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sleepScore           Float  @default(0)
+  workoutScore         Float  @default(0)
+  stimulantsScore      Float  @default(0)
+  macrosScore          Float  @default(0)
+  supplementsScore     Float  @default(0)
+  financesScore        Float  @default(0)
+  healthScore          Float  @default(0)
+  entrepreneurialScore Float  @default(0)
+  overallScore         Float  @default(0)
+
+  recommendation String?
+  priorityAction String?
+  warnings       String?
+  dataHash       String?
+}
