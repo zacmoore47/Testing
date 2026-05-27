@@ -408,7 +408,14 @@
         }
       }
 
-      // Save the complete assistant message to history for context
+      // Check for handoff trigger and clean it from displayed text
+      if (fullText.includes('[HANDOFF]')) {
+        const cleanText = fullText.replace('[HANDOFF]', '').replace(/^\n+/, '').trim();
+        bubble.textContent = cleanText;
+        fullText = cleanText;
+        triggerHandoff();
+      }
+
       if (fullText) {
         messages.push({ role: 'assistant', content: fullText });
       }
@@ -423,6 +430,19 @@
       if (inp) {
         document.getElementById('__chatbot_send__').disabled = !inp.value.trim();
       }
+    }
+  }
+
+  // ── Human handoff ─────────────────────────────────────────────────────────
+  async function triggerHandoff() {
+    try {
+      await fetch(`${SERVER_URL}/api/handoff`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: COMPANY_ID, messages }),
+      });
+    } catch (e) {
+      console.error('[Chatbot] Handoff failed:', e);
     }
   }
 

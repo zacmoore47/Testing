@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
+import nodemailer from 'nodemailer';
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
@@ -41,7 +42,7 @@ app.get('/api/config/:companyId', (req, res) => {
   const company = getCompany(req.params.companyId);
   if (!company) return res.status(404).json({ error: 'Unknown company ID' });
 
-  const { systemPrompt: _hidden, model: _model, ...publicConfig } = company;
+  const { systemPrompt: _sp, model: _m, supportEmail: _se, ...publicConfig } = company;
   res.json(publicConfig);
 });
 
@@ -105,6 +106,47 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
     res.write(`data: ${JSON.stringify({ error: 'Something went wrong. Please try again.' })}\n\n`);
   } finally {
     res.end();
+  }
+});
+
+// --- Handoff endpoint ---
+app.post('/api/handoff', async (req, res) => {
+  const { companyId, messages } = req.body;
+  if (!companyId || !Array.isArray(messages)) {
+    return res.status(400).json({ error: 'companyId and messages are required' });
+  }
+
+  const company = getCompany(companyId);
+  if (!company) return res.status(404).json({ error: 'Unknown company ID' });
+  if (!company.supportEmail) return res.status(200).json({ ok: true }); // no email configured, silently ok
+
+  if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
+    console.warn('Handoff triggered but SMTP_USER/SMTP_PASS not configured');
+    return res.status(200).json({ ok: true });
+  }
+
+  const transcript = messages
+    .map(m => `${m.role === 'user' ? 'Customer' : 'Bot'}: ${m.content}`)
+    .join('\n\n');
+
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST || 'smtp.gmail.com',
+    port: parseInt(process.env.SMTP_PORT || '587'),
+    secure: false,
+    auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+  });
+
+  try {
+    await transporter.sendMail({
+      from: `"${company.botName}" <${process.env.SMTP_USER}>`,
+      to: company.supportEmail,
+      subject: `[${company.botName}] Customer requested human support`,
+      text: `A customer has requested to speak with a human agent.\n\n--- Conversation Transcript ---\n\n${transcript}`,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Handoff email error:', err.message);
+    res.status(500).json({ error: 'Failed to send handoff email' });
   }
 });
 
