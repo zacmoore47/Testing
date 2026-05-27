@@ -1,30 +1,46 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import { subDays, startOfDay } from "date-fns";
+import { subDays, startOfDay, format } from "date-fns";
 import path from "path";
 
 const dbPath = path.resolve(__dirname, "dev.db");
 const adapter = new PrismaBetterSqlite3({ url: `file:${dbPath}` });
 const prisma = new PrismaClient({ adapter } as ConstructorParameters<typeof PrismaClient>[0]);
 
-// Realistic variance helper
-function jitter(base: number, pct: number = 0.15): number {
+function jitter(base: number, pct = 0.15): number {
   return Math.round((base + (Math.random() - 0.5) * 2 * base * pct) * 10) / 10;
 }
-
 function randInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
+function randItem<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
 
 async function main() {
-  console.log("Seeding database with 14 days of data...");
+  console.log("Seeding database with 14 days of data...\n");
 
-  // Ensure profile exists
-  await prisma.userProfile.upsert({
-    where: { id: 1 },
-    create: { id: 1 },
-    update: {},
-  });
+  // ── Profile ──────────────────────────────────────────────────────────────
+  await prisma.userProfile.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
+
+  // ── Projects ─────────────────────────────────────────────────────────────
+  const projects = await Promise.all([
+    prisma.project.create({ data: { name: "SaaS MVP", description: "Building the core product — auth, billing, dashboard", status: "Active", priority: 5, color: "#60a5fa" } }),
+    prisma.project.create({ data: { name: "Content Engine", description: "YouTube + blog content for audience building", status: "Active", priority: 3, color: "#34d399" } }),
+    prisma.project.create({ data: { name: "Sales Pipeline", description: "Outbound sales and partnership development", status: "Active", priority: 4, color: "#fbbf24" } }),
+  ]);
+
+  // ── Habits ────────────────────────────────────────────────────────────────
+  const habits = await Promise.all([
+    prisma.habit.create({ data: { name: "Morning workout", icon: "dumbbell", color: "#34d399", targetFrequency: "Daily", order: 0 } }),
+    prisma.habit.create({ data: { name: "No phone first 30min", icon: "moon", color: "#818cf8", targetFrequency: "Daily", order: 1 } }),
+    prisma.habit.create({ data: { name: "Cold shower", icon: "droplets", color: "#60a5fa", targetFrequency: "Daily", order: 2 } }),
+    prisma.habit.create({ data: { name: "Read 20 pages", icon: "book", color: "#fbbf24", targetFrequency: "Daily", order: 3 } }),
+    prisma.habit.create({ data: { name: "No phone after 10pm", icon: "moon", color: "#f87171", targetFrequency: "Daily", order: 4 } }),
+  ]);
+
+  // Habit completion rates (realistic variance)
+  const habitRates = [0.85, 0.90, 0.70, 0.65, 0.45]; // last one is the problem habit
 
   const defaultSupplements = [
     { name: "Creatine", dose: "5g", time: "08:00" },
@@ -34,45 +50,27 @@ async function main() {
   ];
 
   const workoutTypes = ["strength", "cardio", "strength", "mobility", "strength", "cardio", "rest"];
-  const muscleSets = [
-    "chest, triceps, shoulders",
-    "back, biceps",
-    "legs, glutes",
-    "chest, triceps",
-    "back, biceps, core",
-  ];
+
+  const expenseCategories = ["Food", "Transport", "Subscriptions", "Entertainment", "Bills", "Shopping", "Health"];
+  const incomeSources = ["Client A", "Client B", "SaaS subscription", "Freelance", "Consulting"];
 
   for (let i = 13; i >= 0; i--) {
     const date = startOfDay(subDays(new Date(), i));
-    const dayOfWeek = date.getDay(); // 0=Sun
+    const dateStr = format(date, "yyyy-MM-dd");
+    const dayOfWeek = date.getDay();
+    const isRestDay = dayOfWeek === 0;
+    const isBadSleepNight = i === 11 || i === 4;
+    const highCaffeine = i === 10 || i === 3;
+    const lowProteinDay = i === 9 || i === 2;
 
-    // Slightly declining week 1, recovering week 2 to simulate realistic pattern
-    const weekMultiplier = i > 7 ? 0.9 : 1.0;
-    const isRestDay = dayOfWeek === 0; // Sunday = rest
+    // ── Daily Log ────────────────────────────────────────────────────────
+    const log = await prisma.dailyLog.upsert({ where: { date }, create: { date }, update: {} });
 
-    // Upsert log
-    const log = await prisma.dailyLog.upsert({
-      where: { date },
-      create: { date },
-      update: {},
-    });
-
-    // Sleep — some bad nights mid-week
-    const isBadSleepNight = i === 11 || i === 4; // two rough nights
-    const sleepHours = isBadSleepNight ? jitter(5.5) : jitter(7.5 * weekMultiplier);
+    // Sleep
+    const sleepHours = isBadSleepNight ? jitter(5.5) : jitter(7.4);
     await prisma.sleep.upsert({
       where: { dailyLogId: log.id },
-      create: {
-        dailyLogId: log.id,
-        hours: sleepHours,
-        quality: isBadSleepNight ? randInt(4, 6) : randInt(6, 9),
-        bedtime: isBadSleepNight ? "01:30" : "22:45",
-        waketime: "06:30",
-        remPct: jitter(22, 0.2),
-        deepPct: jitter(18, 0.2),
-        hrv: jitter(isBadSleepNight ? 42 : 58, 0.1),
-        restingHr: isBadSleepNight ? randInt(62, 68) : randInt(54, 62),
-      },
+      create: { dailyLogId: log.id, hours: sleepHours, quality: isBadSleepNight ? randInt(4, 6) : randInt(6, 9), bedtime: isBadSleepNight ? "01:30" : "22:45", waketime: "06:30" },
       update: {},
     });
 
@@ -80,167 +78,141 @@ async function main() {
     const wType = isRestDay ? "rest" : workoutTypes[i % workoutTypes.length];
     await prisma.workout.upsert({
       where: { dailyLogId: log.id },
-      create: {
-        dailyLogId: log.id,
-        type: wType,
-        duration: wType === "rest" ? 0 : jitter(55, 0.2),
-        intensity: wType === "rest" ? 0 : randInt(6, 9),
-        caloriesBurned: wType === "rest" ? 0 : jitter(480, 0.2),
-        muscleGroups: wType === "rest" ? "" : muscleSets[i % muscleSets.length],
-      },
+      create: { dailyLogId: log.id, type: wType, duration: wType === "rest" ? 0 : randInt(45, 70), intensity: wType === "rest" ? 0 : randInt(6, 9), muscleGroups: wType === "rest" ? "" : randItem(["chest, triceps", "back, biceps", "legs, glutes", "shoulders, arms"]) },
       update: {},
     });
 
-    // Stimulants — too much caffeine some days
-    const highCaffeine = i === 10 || i === 3;
+    // Stimulants
     await prisma.stimulants.upsert({
       where: { dailyLogId: log.id },
-      create: {
-        dailyLogId: log.id,
-        caffeineMg: highCaffeine ? jitter(380) : jitter(175),
-        nicotineMg: 0,
-        timeConsumed: highCaffeine ? "07:00, 10:00, 14:30" : "07:00, 12:00",
-      },
+      create: { dailyLogId: log.id, caffeineMg: highCaffeine ? jitter(380) : jitter(175), nicotineMg: 0, timeConsumed: highCaffeine ? "07:00, 10:00, 14:30" : "07:00, 12:00" },
       update: {},
     });
 
-    // Macros — some low-protein days
-    const lowProteinDay = i === 9 || i === 2;
-    const p = lowProteinDay ? jitter(130, 0.1) : jitter(175 * weekMultiplier, 0.1);
-    const c = jitter(240, 0.15);
-    const f = jitter(72, 0.15);
+    // Macros
+    const p = lowProteinDay ? jitter(125) : jitter(172);
+    const c = jitter(240);
+    const f = jitter(72);
     await prisma.macros.upsert({
       where: { dailyLogId: log.id },
-      create: {
-        dailyLogId: log.id,
-        protein: p,
-        carbs: c,
-        fats: f,
-        calories: Math.round(p * 4 + c * 4 + f * 9),
-        waterOz: jitter(90, 0.2),
-        mealCount: randInt(3, 4),
-      },
+      create: { dailyLogId: log.id, protein: p, carbs: c, fats: f, calories: Math.round(p * 4 + c * 4 + f * 9), waterOz: jitter(88), mealCount: randInt(3, 4) },
       update: {},
     });
 
     // Supplements
     await prisma.supplement.deleteMany({ where: { dailyLogId: log.id } });
     await prisma.supplement.createMany({
-      data: defaultSupplements.map((s) => ({
-        dailyLogId: log.id,
-        name: s.name,
-        dose: s.dose,
-        time: s.time,
-        taken: Math.random() > 0.15, // 85% compliance
-      })),
+      data: defaultSupplements.map((s) => ({ dailyLogId: log.id, ...s, taken: Math.random() > 0.15 })),
     });
 
-    // Finances
-    const goodRevDay = i % 3 === 0;
-    const income = goodRevDay ? jitter(650, 0.3) : jitter(280, 0.3);
-    const spend = jitter(85, 0.4);
-    await prisma.finances.upsert({
-      where: { dailyLogId: log.id },
-      create: {
-        dailyLogId: log.id,
-        income,
-        spend,
-        netForDay: income - spend,
-        runningMonthlyNet: (income - spend) * (30 - i),
-      },
-      update: {},
-    });
-
-    // Health metrics
+    // Health
     const stressDay = isBadSleepNight;
     await prisma.healthMetrics.upsert({
       where: { dailyLogId: log.id },
-      create: {
-        dailyLogId: log.id,
-        weight: jitter(182, 0.01),
-        bodyFatPct: jitter(16.5, 0.02),
-        mood: stressDay ? randInt(4, 6) : randInt(6, 9),
-        energy: stressDay ? randInt(4, 6) : randInt(6, 9),
-        stress: stressDay ? randInt(6, 9) : randInt(2, 5),
-        focus: stressDay ? randInt(4, 6) : randInt(6, 9),
-      },
+      create: { dailyLogId: log.id, weight: jitter(182, 0.01), mood: stressDay ? randInt(4, 6) : randInt(6, 9), energy: stressDay ? randInt(4, 6) : randInt(6, 9), stress: stressDay ? randInt(6, 9) : randInt(2, 5), focus: stressDay ? randInt(4, 6) : randInt(6, 9) },
       update: {},
     });
 
-    // Entrepreneurial
-    const productiveDay = !isRestDay && !stressDay;
-    await prisma.entrepreneurial.upsert({
-      where: { dailyLogId: log.id },
-      create: {
-        dailyLogId: log.id,
-        tasksCompleted: productiveDay ? randInt(6, 12) : randInt(2, 5),
-        deepWorkHours: productiveDay ? jitter(3.8, 0.2) : jitter(1.5, 0.3),
-        revenueActivityHours: productiveDay ? jitter(3.0, 0.2) : jitter(1.0, 0.3),
-        keyWins: productiveDay
-          ? ["Shipped new feature", "Sales call booked", "Content published"][i % 3]
-          : undefined,
-        blockers: !productiveDay ? "Low energy, poor focus" : undefined,
-        projectTags: "SaaS, content, sales",
-      },
-      update: {},
-    });
+    // ── Expenses (2-4 per day) ───────────────────────────────────────────
+    const numExpenses = randInt(2, 4);
+    for (let e = 0; e < numExpenses; e++) {
+      const cat = randItem(expenseCategories);
+      const amounts: Record<string, number> = { Food: 25, Transport: 15, Subscriptions: 30, Entertainment: 40, Bills: 80, Shopping: 60, Health: 35 };
+      await prisma.expense.create({
+        data: { date, amount: jitter(amounts[cat] ?? 30, 0.4), category: cat, description: cat === "Food" ? randItem(["Chipotle", "Grocery run", "Coffee", "Lunch out"]) : null },
+      });
+    }
 
-    // Seed pre-computed scores so the dashboard shows data without API calls
+    // ── Income (most days, not all) ───────────────────────────────────────
+    if (Math.random() > 0.25) {
+      await prisma.income.create({
+        data: { date, amount: jitter(i % 3 === 0 ? 650 : 280, 0.3), source: randItem(incomeSources), description: null },
+      });
+    }
+
+    // ── Project logs ─────────────────────────────────────────────────────
+    if (!isRestDay) {
+      const projectsToLog = Math.random() > 0.4 ? [projects[0], projects[randInt(1, 2)]] : [projects[0]];
+      for (const proj of projectsToLog) {
+        const wins = {
+          [projects[0].id]: ["Shipped auth flow", "Fixed payment bug", "Built dashboard charts", "Wrote onboarding copy", "Set up CI/CD"],
+          [projects[1].id]: ["Recorded YouTube video", "Published blog post", "Wrote email sequence", "Created social content"],
+          [projects[2].id]: ["Sent 20 cold emails", "Had discovery call", "Built proposal template", "Followed up 5 leads"],
+        };
+        await prisma.projectLog.create({
+          data: {
+            projectId: proj.id,
+            date,
+            hoursWorked: jitter(proj.priority === 5 ? 3.5 : 1.5, 0.2),
+            whatWasCompleted: randItem(wins[proj.id] ?? ["Made progress"]),
+            blockers: Math.random() > 0.7 ? randItem(["Waiting on API docs", "Unclear requirements", "Low energy day"]) : null,
+            nextStep: randItem(["Pick up tomorrow", "Review with team", "Ship by EOW"]),
+          },
+        });
+      }
+    }
+
+    // ── Habit completions ─────────────────────────────────────────────────
+    for (let h = 0; h < habits.length; h++) {
+      if (Math.random() < habitRates[h]) {
+        await prisma.habitCompletion.upsert({
+          where: { habitId_date: { habitId: habits[h].id, date } },
+          create: { habitId: habits[h].id, date, completed: true },
+          update: {},
+        });
+      }
+    }
+
+    // ── Pre-computed scores ───────────────────────────────────────────────
     const sleepScore = sleepHours >= 8 ? 92 : sleepHours >= 7 ? 80 : sleepHours >= 6 ? 62 : 40;
-    const workoutScore = wType === "rest" ? 65 : jitter(80, 0.1);
+    const workoutScore = wType === "rest" ? 65 : jitter(80);
     const stimScore = highCaffeine ? 45 : 88;
-    const macroScore = lowProteinDay ? 60 : jitter(82, 0.1);
-    const supScore = jitter(85, 0.1);
-    const finScore = income > 500 ? jitter(88, 0.1) : jitter(65, 0.1);
-    const healthScore = stressDay ? 55 : jitter(78, 0.1);
-    const entScore = productiveDay ? jitter(80, 0.1) : 55;
-    const overall = Math.round(
-      (sleepScore + workoutScore + stimScore + macroScore + supScore + finScore + healthScore + entScore) / 8
-    );
+    const macroScore = lowProteinDay ? 60 : jitter(82);
+    const supScore = jitter(84);
+    const expenses = await prisma.expense.findMany({ where: { date: { gte: date, lte: new Date(date.getTime() + 86399999) } } });
+    const incomeRows = await prisma.income.findMany({ where: { date: { gte: date, lte: new Date(date.getTime() + 86399999) } } });
+    const net = incomeRows.reduce((s, r) => s + r.amount, 0) - expenses.reduce((s, e) => s + e.amount, 0);
+    const finScore = net > 0 ? jitter(82) : jitter(48);
+    const healthScore = stressDay ? 55 : jitter(76);
+    const projHours = isRestDay ? 0 : jitter(5);
+    const entScore = projHours >= 4 ? jitter(85) : projHours >= 2 ? jitter(65) : 45;
+    const habitsCompleted = habits.filter((_, hi) => Math.random() < habitRates[hi]).length;
+    const habitScore = Math.round((habitsCompleted / habits.length) * 100);
+    const scores = [sleepScore, workoutScore, stimScore, macroScore, supScore, finScore, healthScore, entScore, habitScore];
+    const overall = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
 
     await prisma.dailyScore.upsert({
       where: { dailyLogId: log.id },
       create: {
         dailyLogId: log.id,
-        sleepScore,
-        workoutScore,
-        stimulantsScore: stimScore,
-        macrosScore: macroScore,
-        supplementsScore: supScore,
-        financesScore: finScore,
-        healthScore,
-        entrepreneurialScore: entScore,
-        overallScore: overall,
-        recommendation:
-          i === 0
-            ? `You've averaged ${(sleepHours).toFixed(1)}h sleep over the past 3 nights — below your 8h target. Cap caffeine at 2pm tomorrow and aim for 10:30pm in bed. Your deep work is ${productiveDay ? "solid" : "below target"}; block 4h focused time before noon.`
-            : null,
-        priorityAction:
-          i === 0
-            ? sleepHours < 7
-              ? "Fix sleep tonight — set a 10:30pm hard cutoff, no screens after 10pm."
-              : "Hit 180g protein today; you've missed it 2 of the last 3 days."
-            : null,
-        warnings:
-          i === 0 && highCaffeine
-            ? JSON.stringify(["Caffeine intake was 380mg — 90% above your 200mg limit. You consumed it at 2:30pm which likely impacted your sleep quality."])
-            : JSON.stringify([]),
+        sleepScore, workoutScore, stimulantsScore: stimScore, macrosScore: macroScore,
+        supplementsScore: supScore, financesScore: finScore, healthScore, entrepreneurialScore: entScore,
+        habitScore, overallScore: overall,
+        recommendation: i === 0
+          ? `You've averaged ${sleepHours.toFixed(1)}h sleep — below your 8h target. Your 'No phone after 10pm' habit is at ${Math.round(habitRates[4] * 100)}% over 30 days and is directly correlated with your late bedtimes. SaaS MVP has the most hours this week; Sales Pipeline hasn't been touched in 2 days.`
+          : null,
+        priorityAction: i === 0
+          ? sleepHours < 7 ? "Set a hard 10:30pm screen-off alarm tonight. This single habit fixes your sleep, which cascades into energy and focus."
+          : "Log a Sales Pipeline entry today — it's your highest-leverage revenue activity and you've skipped it 2 days running."
+          : null,
+        warnings: i === 0 && highCaffeine
+          ? JSON.stringify(["Caffeine at 2:30pm (380mg total) likely cut 45-60min of deep sleep. Keep it under 200mg and before 1pm."])
+          : JSON.stringify([]),
         dataHash: "seed",
       },
       update: {},
     });
 
-    console.log(`  ✓ Day ${14 - i} seeded (${date.toISOString().slice(0, 10)})`);
+    console.log(`  ✓ Day ${14 - i} seeded (${dateStr}) — sleep: ${sleepHours}h, score: ${overall}`);
   }
 
-  console.log("\n✅ Seed complete. 14 days of data loaded.");
+  console.log("\n✅ Seed complete:");
+  console.log(`   - 14 daily logs`);
+  console.log(`   - ${projects.length} projects with logs`);
+  console.log(`   - ${habits.length} habits with completion history`);
+  console.log(`   - Finance transactions (expenses + income) for each day`);
 }
 
 main()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
-  });
+  .catch((e) => { console.error(e); process.exit(1); })
+  .finally(async () => { await prisma.$disconnect(); });

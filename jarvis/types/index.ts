@@ -1,3 +1,18 @@
+// ─── Sector names ─────────────────────────────────────────────────────────
+
+export type SectorName =
+  | "sleep"
+  | "workout"
+  | "stimulants"
+  | "macros"
+  | "supplements"
+  | "finances"
+  | "health"
+  | "entrepreneurial"
+  | "habits";
+
+// ─── AI Analysis ──────────────────────────────────────────────────────────
+
 export interface SectorScores {
   sleep: number;
   workout: number;
@@ -7,6 +22,7 @@ export interface SectorScores {
   finances: number;
   health: number;
   entrepreneurial: number;
+  habits: number;
 }
 
 export interface AIAnalysis {
@@ -17,28 +33,16 @@ export interface AIAnalysis {
   warnings: string[];
 }
 
-export type SectorName =
-  | "sleep"
-  | "workout"
-  | "stimulants"
-  | "macros"
-  | "supplements"
-  | "finances"
-  | "health"
-  | "entrepreneurial";
+// ─── Daily Log Input ──────────────────────────────────────────────────────
 
 export interface DailyLogInput {
-  date: string; // ISO date string
+  date: string;
 
   sleep?: {
     hours: number;
     quality: number;
     bedtime: string;
     waketime: string;
-    remPct?: number;
-    deepPct?: number;
-    hrv?: number;
-    restingHr?: number;
     notes?: string;
   };
 
@@ -46,7 +50,6 @@ export interface DailyLogInput {
     type: string;
     duration: number;
     intensity: number;
-    caloriesBurned?: number;
     muscleGroups?: string;
     notes?: string;
   };
@@ -76,15 +79,6 @@ export interface DailyLogInput {
     taken: boolean;
   }>;
 
-  finances?: {
-    income: number;
-    spend: number;
-    categories?: string;
-    netForDay: number;
-    runningMonthlyNet: number;
-    notes?: string;
-  };
-
   healthMetrics?: {
     weight?: number;
     bodyFatPct?: number;
@@ -97,17 +91,110 @@ export interface DailyLogInput {
     glucose?: number;
     notes?: string;
   };
-
-  entrepreneurial?: {
-    tasksCompleted: number;
-    deepWorkHours: number;
-    revenueActivityHours: number;
-    keyWins?: string;
-    blockers?: string;
-    projectTags?: string;
-    notes?: string;
-  };
 }
+
+// ─── Finance ──────────────────────────────────────────────────────────────
+
+export const EXPENSE_CATEGORIES = [
+  "Food",
+  "Transport",
+  "Subscriptions",
+  "Entertainment",
+  "Bills",
+  "Shopping",
+  "Health",
+  "Other",
+] as const;
+
+export type ExpenseCategory = (typeof EXPENSE_CATEGORIES)[number];
+
+export interface ExpenseRow {
+  id: number;
+  date: string;
+  amount: number;
+  category: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface IncomeRow {
+  id: number;
+  date: string;
+  amount: number;
+  source: string;
+  description: string | null;
+  createdAt: string;
+}
+
+export interface DailyFinanceSummary {
+  date: string;
+  totalExpenses: number;
+  totalIncome: number;
+  net: number;
+  expensesByCategory: Record<string, number>;
+}
+
+// ─── Projects ─────────────────────────────────────────────────────────────
+
+export type ProjectStatus = "Active" | "Paused" | "Completed" | "Archived";
+
+export interface ProjectRow {
+  id: number;
+  name: string;
+  description: string | null;
+  status: ProjectStatus;
+  priority: number;
+  color: string;
+  targetCompletionDate: string | null;
+  createdAt: string;
+  logs: ProjectLogRow[];
+}
+
+export interface ProjectLogRow {
+  id: number;
+  projectId: number;
+  date: string;
+  hoursWorked: number;
+  whatWasCompleted: string;
+  blockers: string | null;
+  nextStep: string | null;
+  createdAt: string;
+}
+
+export interface ProjectLogInput {
+  projectId: number;
+  date: string;
+  hoursWorked: number;
+  whatWasCompleted: string;
+  blockers?: string;
+  nextStep?: string;
+}
+
+// ─── Habits ───────────────────────────────────────────────────────────────
+
+export type HabitFrequency = "Daily" | "Weekdays" | string;
+
+export interface HabitRow {
+  id: number;
+  name: string;
+  icon: string;
+  color: string;
+  targetFrequency: HabitFrequency;
+  active: boolean;
+  order: number;
+  createdAt: string;
+  completions: HabitCompletionRow[];
+}
+
+export interface HabitCompletionRow {
+  id: number;
+  habitId: number;
+  date: string;
+  completed: boolean;
+  createdAt: string;
+}
+
+// ─── Dashboard cards ──────────────────────────────────────────────────────
 
 export interface SparklineData {
   date: string;

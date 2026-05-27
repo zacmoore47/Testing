@@ -17,11 +17,10 @@ interface Profile {
   targetFats: number;
   targetCalories: number;
   targetWater: number;
-  targetDailyIncome: number;
+  targetDailySpend: number;
   targetMonthlySavings: number;
   targetWeight: number;
-  targetDeepWorkHours: number;
-  targetRevenueHoursPerDay: number;
+  targetProjectHours: number;
   maxCaffeineMg: number;
   overallGoals: string;
 }
@@ -31,13 +30,10 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    fetch("/api/profile")
-      .then((r) => r.json())
-      .then(setProfile)
-      .catch(() => toast.error("Failed to load settings"));
+    fetch("/api/profile").then((r) => r.json()).then(setProfile).catch(() => toast.error("Failed to load settings"));
   }, []);
 
-  function set(key: keyof Profile, value: string | number) {
+  function set<K extends keyof Profile>(key: K, value: Profile[K]) {
     setProfile((p) => p ? { ...p, [key]: value } : p);
   }
 
@@ -79,8 +75,7 @@ export default function SettingsPage() {
   if (!profile) {
     return (
       <div className="space-y-4">
-        <div className="h-8 w-48 bg-zinc-800 rounded animate-pulse" />
-        <div className="h-64 bg-zinc-800 rounded animate-pulse" />
+        {[...Array(4)].map((_, i) => <div key={i} className="h-40 bg-zinc-800 rounded-xl animate-pulse" />)}
       </div>
     );
   }
@@ -102,60 +97,44 @@ export default function SettingsPage() {
       <Card>
         <CardHeader><CardTitle>😴 Sleep goals</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
-          <div>
-            <Label>Target sleep hours</Label>
-            <Input type="number" step="0.5" value={profile.targetSleepHours} onChange={e => set("targetSleepHours", parseFloat(e.target.value))} />
-          </div>
-          <div>
-            <Label>Target bedtime</Label>
-            <Input type="time" value={profile.targetBedtime} onChange={e => set("targetBedtime", e.target.value)} />
-          </div>
-          <div>
-            <Label>Target wake time</Label>
-            <Input type="time" value={profile.targetWaketime} onChange={e => set("targetWaketime", e.target.value)} />
-          </div>
+          <div><Label>Target sleep hours</Label><Input type="number" step="0.5" value={profile.targetSleepHours} onChange={(e) => set("targetSleepHours", parseFloat(e.target.value))} /></div>
+          <div><Label>Target bedtime</Label><Input type="time" value={profile.targetBedtime} onChange={(e) => set("targetBedtime", e.target.value)} /></div>
+          <div><Label>Target wake time</Label><Input type="time" value={profile.targetWaketime} onChange={(e) => set("targetWaketime", e.target.value)} /></div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader><CardTitle>💪 Fitness goals</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
-          <div>
-            <Label>Workouts per week</Label>
-            <Input type="number" value={profile.targetWorkoutsPerWeek} onChange={e => set("targetWorkoutsPerWeek", parseInt(e.target.value))} />
-          </div>
-          <div>
-            <Label>Max caffeine (mg/day)</Label>
-            <Input type="number" value={profile.maxCaffeineMg} onChange={e => set("maxCaffeineMg", parseFloat(e.target.value))} />
-          </div>
+          <div><Label>Workouts per week</Label><Input type="number" value={profile.targetWorkoutsPerWeek} onChange={(e) => set("targetWorkoutsPerWeek", parseInt(e.target.value))} /></div>
+          <div><Label>Max caffeine (mg/day)</Label><Input type="number" value={profile.maxCaffeineMg} onChange={(e) => set("maxCaffeineMg", parseFloat(e.target.value))} /></div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader><CardTitle>🥗 Nutrition goals</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
-          <div><Label>Protein (g)</Label><Input type="number" value={profile.targetProtein} onChange={e => set("targetProtein", parseFloat(e.target.value))} /></div>
-          <div><Label>Carbs (g)</Label><Input type="number" value={profile.targetCarbs} onChange={e => set("targetCarbs", parseFloat(e.target.value))} /></div>
-          <div><Label>Fats (g)</Label><Input type="number" value={profile.targetFats} onChange={e => set("targetFats", parseFloat(e.target.value))} /></div>
-          <div><Label>Calories</Label><Input type="number" value={profile.targetCalories} onChange={e => set("targetCalories", parseFloat(e.target.value))} /></div>
-          <div><Label>Water (oz/day)</Label><Input type="number" value={profile.targetWater} onChange={e => set("targetWater", parseFloat(e.target.value))} /></div>
+          <div><Label>Protein (g)</Label><Input type="number" value={profile.targetProtein} onChange={(e) => set("targetProtein", parseFloat(e.target.value))} /></div>
+          <div><Label>Carbs (g)</Label><Input type="number" value={profile.targetCarbs} onChange={(e) => set("targetCarbs", parseFloat(e.target.value))} /></div>
+          <div><Label>Fats (g)</Label><Input type="number" value={profile.targetFats} onChange={(e) => set("targetFats", parseFloat(e.target.value))} /></div>
+          <div><Label>Calories</Label><Input type="number" value={profile.targetCalories} onChange={(e) => set("targetCalories", parseFloat(e.target.value))} /></div>
+          <div><Label>Water (oz/day)</Label><Input type="number" value={profile.targetWater} onChange={(e) => set("targetWater", parseFloat(e.target.value))} /></div>
         </CardContent>
       </Card>
 
       <Card>
         <CardHeader><CardTitle>💰 Financial goals</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
-          <div><Label>Daily income target ($)</Label><Input type="number" value={profile.targetDailyIncome} onChange={e => set("targetDailyIncome", parseFloat(e.target.value))} /></div>
-          <div><Label>Monthly savings target ($)</Label><Input type="number" value={profile.targetMonthlySavings} onChange={e => set("targetMonthlySavings", parseFloat(e.target.value))} /></div>
+          <div><Label>Daily spend limit ($)</Label><Input type="number" value={profile.targetDailySpend} onChange={(e) => set("targetDailySpend", parseFloat(e.target.value))} /></div>
+          <div><Label>Monthly savings target ($)</Label><Input type="number" value={profile.targetMonthlySavings} onChange={(e) => set("targetMonthlySavings", parseFloat(e.target.value))} /></div>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>🚀 Entrepreneur goals</CardTitle></CardHeader>
+        <CardHeader><CardTitle>🚀 Project goals</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-2 gap-4">
-          <div><Label>Deep work hours/day</Label><Input type="number" step="0.5" value={profile.targetDeepWorkHours} onChange={e => set("targetDeepWorkHours", parseFloat(e.target.value))} /></div>
-          <div><Label>Revenue activity hrs/day</Label><Input type="number" step="0.5" value={profile.targetRevenueHoursPerDay} onChange={e => set("targetRevenueHoursPerDay", parseFloat(e.target.value))} /></div>
-          <div><Label>Target weight (lbs)</Label><Input type="number" step="0.1" value={profile.targetWeight} onChange={e => set("targetWeight", parseFloat(e.target.value))} /></div>
+          <div><Label>Project hours/day target</Label><Input type="number" step="0.5" value={profile.targetProjectHours} onChange={(e) => set("targetProjectHours", parseFloat(e.target.value))} /></div>
+          <div><Label>Target weight (lbs)</Label><Input type="number" step="0.1" value={profile.targetWeight} onChange={(e) => set("targetWeight", parseFloat(e.target.value))} /></div>
         </CardContent>
       </Card>
 
@@ -166,7 +145,7 @@ export default function SettingsPage() {
           <textarea
             className="mt-1.5 flex min-h-[100px] w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
             value={profile.overallGoals}
-            onChange={e => set("overallGoals", e.target.value)}
+            onChange={(e) => set("overallGoals", e.target.value)}
             placeholder="e.g. Build a $10k/mo business while getting to 175lbs and 8% body fat..."
           />
         </CardContent>

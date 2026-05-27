@@ -7,19 +7,28 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { DailyLogInput } from "@/types";
+import { DailyLogInput, ProjectRow } from "@/types";
 import { Save, Plus, Trash2 } from "lucide-react";
-
-interface DailyLogFormProps {
-  date: string;
-  existing?: Partial<DailyLogInput>;
-}
+import { FastAddTransaction } from "@/components/finance/FastAddTransaction";
 
 interface SupplementEntry {
   name: string;
   dose: string;
   time: string;
   taken: boolean;
+}
+
+interface ProjectLogEntry {
+  projectId: number;
+  projectName: string;
+  hoursWorked: string;
+  whatWasCompleted: string;
+  blockers: string;
+}
+
+interface DailyLogFormProps {
+  date: string;
+  existing?: Partial<DailyLogInput>;
 }
 
 const DEFAULT_SUPPLEMENTS: SupplementEntry[] = [
@@ -32,6 +41,9 @@ const DEFAULT_SUPPLEMENTS: SupplementEntry[] = [
 export function DailyLogForm({ date, existing }: DailyLogFormProps) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
+  const [projects, setProjects] = useState<ProjectRow[]>([]);
+  const [projectLogs, setProjectLogs] = useState<ProjectLogEntry[]>([]);
+
   const sectionRefs = {
     sleep: useRef<HTMLDivElement>(null),
     workout: useRef<HTMLDivElement>(null),
@@ -48,16 +60,11 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
   const [sleepQuality, setSleepQuality] = useState(existing?.sleep?.quality?.toString() ?? "");
   const [bedtime, setBedtime] = useState(existing?.sleep?.bedtime ?? "22:30");
   const [waketime, setWaketime] = useState(existing?.sleep?.waketime ?? "06:30");
-  const [remPct, setRemPct] = useState(existing?.sleep?.remPct?.toString() ?? "");
-  const [deepPct, setDeepPct] = useState(existing?.sleep?.deepPct?.toString() ?? "");
-  const [hrv, setHrv] = useState(existing?.sleep?.hrv?.toString() ?? "");
-  const [restingHr, setRestingHr] = useState(existing?.sleep?.restingHr?.toString() ?? "");
 
   // Workout
   const [workoutType, setWorkoutType] = useState(existing?.workout?.type ?? "strength");
   const [workoutDuration, setWorkoutDuration] = useState(existing?.workout?.duration?.toString() ?? "");
   const [workoutIntensity, setWorkoutIntensity] = useState(existing?.workout?.intensity?.toString() ?? "");
-  const [caloriesBurned, setCaloriesBurned] = useState(existing?.workout?.caloriesBurned?.toString() ?? "");
   const [muscleGroups, setMuscleGroups] = useState(existing?.workout?.muscleGroups ?? "");
 
   // Stimulants
@@ -80,10 +87,6 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
       : DEFAULT_SUPPLEMENTS
   );
 
-  // Finances
-  const [income, setIncome] = useState(existing?.finances?.income?.toString() ?? "0");
-  const [spend, setSpend] = useState(existing?.finances?.spend?.toString() ?? "0");
-
   // Health
   const [weight, setWeight] = useState(existing?.healthMetrics?.weight?.toString() ?? "");
   const [mood, setMood] = useState(existing?.healthMetrics?.mood?.toString() ?? "");
@@ -91,12 +94,10 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
   const [stress, setStress] = useState(existing?.healthMetrics?.stress?.toString() ?? "");
   const [focus, setFocus] = useState(existing?.healthMetrics?.focus?.toString() ?? "");
 
-  // Entrepreneurial
-  const [tasksCompleted, setTasksCompleted] = useState(existing?.entrepreneurial?.tasksCompleted?.toString() ?? "");
-  const [deepWorkHours, setDeepWorkHours] = useState(existing?.entrepreneurial?.deepWorkHours?.toString() ?? "");
-  const [revenueHours, setRevenueHours] = useState(existing?.entrepreneurial?.revenueActivityHours?.toString() ?? "");
-  const [keyWins, setKeyWins] = useState(existing?.entrepreneurial?.keyWins ?? "");
-  const [blockers, setBlockers] = useState(existing?.entrepreneurial?.blockers ?? "");
+  // Load active projects
+  useEffect(() => {
+    fetch("/api/projects?status=Active").then((r) => r.json()).then(setProjects).catch(() => {});
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -107,23 +108,45 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
         u: "supplements", f: "finances", h: "health", e: "entrepreneurial",
       };
       const key = e.key.toLowerCase();
-      if (map[key]) {
-        sectionRefs[map[key]].current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }
+      if (map[key]) sectionRefs[map[key]].current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-calculate calories from macros
+  // Auto-calc calories
   useEffect(() => {
     const p = parseFloat(protein) || 0;
     const c = parseFloat(carbs) || 0;
     const f = parseFloat(fats) || 0;
-    if (p || c || f) {
-      setCalories(Math.round(p * 4 + c * 4 + f * 9).toString());
-    }
+    if (p || c || f) setCalories(Math.round(p * 4 + c * 4 + f * 9).toString());
   }, [protein, carbs, fats]);
+
+  function addProjectLog() {
+    if (projects.length === 0) return;
+    const first = projects[0];
+    setProjectLogs((prev) => [
+      ...prev,
+      { projectId: first.id, projectName: first.name, hoursWorked: "", whatWasCompleted: "", blockers: "" },
+    ]);
+  }
+
+  async function saveProjectLogs() {
+    for (const pl of projectLogs) {
+      if (!pl.whatWasCompleted || !pl.hoursWorked) continue;
+      await fetch("/api/project-logs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          projectId: pl.projectId,
+          date,
+          hoursWorked: parseFloat(pl.hoursWorked),
+          whatWasCompleted: pl.whatWasCompleted,
+          blockers: pl.blockers || undefined,
+        }),
+      });
+    }
+  }
 
   async function handleSave() {
     setSaving(true);
@@ -131,65 +154,18 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
       const payload: DailyLogInput = {
         date,
         sleep: sleepHours
-          ? {
-              hours: parseFloat(sleepHours),
-              quality: parseInt(sleepQuality) || 7,
-              bedtime,
-              waketime,
-              remPct: remPct ? parseFloat(remPct) : undefined,
-              deepPct: deepPct ? parseFloat(deepPct) : undefined,
-              hrv: hrv ? parseFloat(hrv) : undefined,
-              restingHr: restingHr ? parseInt(restingHr) : undefined,
-            }
+          ? { hours: parseFloat(sleepHours), quality: parseInt(sleepQuality) || 7, bedtime, waketime }
           : undefined,
         workout: workoutDuration
-          ? {
-              type: workoutType,
-              duration: parseInt(workoutDuration),
-              intensity: parseInt(workoutIntensity) || 7,
-              caloriesBurned: caloriesBurned ? parseFloat(caloriesBurned) : undefined,
-              muscleGroups: muscleGroups || undefined,
-            }
+          ? { type: workoutType, duration: parseInt(workoutDuration), intensity: parseInt(workoutIntensity) || 7, muscleGroups: muscleGroups || undefined }
           : undefined,
-        stimulants: {
-          caffeineMg: parseFloat(caffeineMg) || 0,
-          nicotineMg: parseFloat(nicotineMg) || 0,
-          timeConsumed: caffeineTime || undefined,
-        },
+        stimulants: { caffeineMg: parseFloat(caffeineMg) || 0, nicotineMg: parseFloat(nicotineMg) || 0, timeConsumed: caffeineTime || undefined },
         macros: protein
-          ? {
-              protein: parseFloat(protein),
-              carbs: parseFloat(carbs) || 0,
-              fats: parseFloat(fats) || 0,
-              calories: parseFloat(calories) || 0,
-              waterOz: parseFloat(waterOz) || 0,
-              mealCount: parseInt(mealCount) || 3,
-            }
+          ? { protein: parseFloat(protein), carbs: parseFloat(carbs) || 0, fats: parseFloat(fats) || 0, calories: parseFloat(calories) || 0, waterOz: parseFloat(waterOz) || 0, mealCount: parseInt(mealCount) || 3 }
           : undefined,
         supplements: supplements.filter((s) => s.name),
-        finances: {
-          income: parseFloat(income) || 0,
-          spend: parseFloat(spend) || 0,
-          netForDay: (parseFloat(income) || 0) - (parseFloat(spend) || 0),
-          runningMonthlyNet: 0,
-        },
         healthMetrics: mood
-          ? {
-              weight: weight ? parseFloat(weight) : undefined,
-              mood: mood ? parseInt(mood) : undefined,
-              energy: energy ? parseInt(energy) : undefined,
-              stress: stress ? parseInt(stress) : undefined,
-              focus: focus ? parseInt(focus) : undefined,
-            }
-          : undefined,
-        entrepreneurial: deepWorkHours
-          ? {
-              tasksCompleted: parseInt(tasksCompleted) || 0,
-              deepWorkHours: parseFloat(deepWorkHours),
-              revenueActivityHours: parseFloat(revenueHours) || 0,
-              keyWins: keyWins || undefined,
-              blockers: blockers || undefined,
-            }
+          ? { weight: weight ? parseFloat(weight) : undefined, mood: parseInt(mood), energy: energy ? parseInt(energy) : undefined, stress: stress ? parseInt(stress) : undefined, focus: focus ? parseInt(focus) : undefined }
           : undefined,
       };
 
@@ -198,8 +174,10 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-
       if (!res.ok) throw new Error(await res.text());
+
+      await saveProjectLogs();
+
       toast.success("Day logged successfully");
       router.push("/");
       router.refresh();
@@ -210,13 +188,11 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
     }
   }
 
-  const numInput = "w-full";
-
   return (
     <div className="space-y-6 pb-20">
-      {/* Keyboard hint */}
+      {/* Keyboard hints */}
       <div className="text-xs text-zinc-600 flex flex-wrap gap-3">
-        {[["S","Sleep"],["W","Workout"],["C","Stimulants"],["M","Macros"],["U","Supplements"],["F","Finances"],["H","Health"],["E","Entrepreneur"]].map(([k,l]) => (
+        {[["S","Sleep"],["W","Workout"],["C","Caffeine"],["M","Macros"],["U","Supplements"],["F","Finances"],["H","Health"],["E","Projects"]].map(([k,l]) => (
           <span key={k}><kbd className="rounded bg-zinc-800 px-1.5 py-0.5 text-zinc-400">{k}</kbd> {l}</span>
         ))}
       </div>
@@ -226,14 +202,13 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
         <Card>
           <CardHeader><CardTitle>😴 Sleep</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div><Label>Hours</Label><Input className={numInput} type="number" step="0.1" placeholder="7.5" value={sleepHours} onChange={e => setSleepHours(e.target.value)} /></div>
-            <div><Label>Quality (1-10)</Label><Input className={numInput} type="number" min="1" max="10" placeholder="7" value={sleepQuality} onChange={e => setSleepQuality(e.target.value)} /></div>
-            <div><Label>Bedtime</Label><Input className={numInput} type="time" value={bedtime} onChange={e => setBedtime(e.target.value)} /></div>
-            <div><Label>Wake time</Label><Input className={numInput} type="time" value={waketime} onChange={e => setWaketime(e.target.value)} /></div>
-            <div><Label>REM %</Label><Input className={numInput} type="number" placeholder="20" value={remPct} onChange={e => setRemPct(e.target.value)} /></div>
-            <div><Label>Deep %</Label><Input className={numInput} type="number" placeholder="15" value={deepPct} onChange={e => setDeepPct(e.target.value)} /></div>
-            <div><Label>HRV (ms)</Label><Input className={numInput} type="number" placeholder="55" value={hrv} onChange={e => setHrv(e.target.value)} /></div>
-            <div><Label>Resting HR</Label><Input className={numInput} type="number" placeholder="60" value={restingHr} onChange={e => setRestingHr(e.target.value)} /></div>
+            <div><Label>Hours</Label><Input type="number" step="0.1" placeholder="7.5" value={sleepHours} onChange={(e) => setSleepHours(e.target.value)} /></div>
+            <div>
+              <Label>Quality (1-10)</Label>
+              <Input type="number" min="1" max="10" placeholder="7" value={sleepQuality} onChange={(e) => setSleepQuality(e.target.value)} />
+            </div>
+            <div><Label>Bedtime</Label><Input type="time" value={bedtime} onChange={(e) => setBedtime(e.target.value)} /></div>
+            <div><Label>Wake time</Label><Input type="time" value={waketime} onChange={(e) => setWaketime(e.target.value)} /></div>
           </CardContent>
         </Card>
       </div>
@@ -248,18 +223,15 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
               <Select value={workoutType} onValueChange={setWorkoutType}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="strength">Strength</SelectItem>
-                  <SelectItem value="cardio">Cardio</SelectItem>
-                  <SelectItem value="mobility">Mobility</SelectItem>
-                  <SelectItem value="hiit">HIIT</SelectItem>
-                  <SelectItem value="rest">Rest Day</SelectItem>
+                  {["strength","cardio","mobility","hiit","rest"].map((t) => (
+                    <SelectItem key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
-            <div><Label>Duration (min)</Label><Input className={numInput} type="number" placeholder="60" value={workoutDuration} onChange={e => setWorkoutDuration(e.target.value)} /></div>
-            <div><Label>Intensity (1-10)</Label><Input className={numInput} type="number" min="1" max="10" placeholder="7" value={workoutIntensity} onChange={e => setWorkoutIntensity(e.target.value)} /></div>
-            <div><Label>Calories burned</Label><Input className={numInput} type="number" placeholder="450" value={caloriesBurned} onChange={e => setCaloriesBurned(e.target.value)} /></div>
-            <div className="col-span-2 md:col-span-4"><Label>Muscle groups</Label><Input type="text" placeholder="chest, triceps, shoulders" value={muscleGroups} onChange={e => setMuscleGroups(e.target.value)} /></div>
+            <div><Label>Duration (min)</Label><Input type="number" placeholder="60" value={workoutDuration} onChange={(e) => setWorkoutDuration(e.target.value)} /></div>
+            <div><Label>Intensity (1-10)</Label><Input type="number" min="1" max="10" placeholder="7" value={workoutIntensity} onChange={(e) => setWorkoutIntensity(e.target.value)} /></div>
+            <div><Label>Muscle groups</Label><Input type="text" placeholder="chest, triceps" value={muscleGroups} onChange={(e) => setMuscleGroups(e.target.value)} /></div>
           </CardContent>
         </Card>
       </div>
@@ -269,9 +241,9 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
         <Card>
           <CardHeader><CardTitle>☕ Stimulants</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div><Label>Caffeine (mg)</Label><Input className={numInput} type="number" placeholder="200" value={caffeineMg} onChange={e => setCaffeineMg(e.target.value)} /></div>
-            <div><Label>Nicotine (mg)</Label><Input className={numInput} type="number" placeholder="0" value={nicotineMg} onChange={e => setNicotineMg(e.target.value)} /></div>
-            <div><Label>Times consumed</Label><Input type="text" placeholder="07:00, 12:30" value={caffeineTime} onChange={e => setCaffeineTime(e.target.value)} /></div>
+            <div><Label>Caffeine (mg)</Label><Input type="number" placeholder="200" value={caffeineMg} onChange={(e) => setCaffeineMg(e.target.value)} /></div>
+            <div><Label>Nicotine (mg)</Label><Input type="number" placeholder="0" value={nicotineMg} onChange={(e) => setNicotineMg(e.target.value)} /></div>
+            <div><Label>Times consumed</Label><Input type="text" placeholder="07:00, 12:30" value={caffeineTime} onChange={(e) => setCaffeineTime(e.target.value)} /></div>
           </CardContent>
         </Card>
       </div>
@@ -281,12 +253,12 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
         <Card>
           <CardHeader><CardTitle>🥗 Nutrition</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div><Label>Protein (g)</Label><Input className={numInput} type="number" placeholder="180" value={protein} onChange={e => setProtein(e.target.value)} /></div>
-            <div><Label>Carbs (g)</Label><Input className={numInput} type="number" placeholder="250" value={carbs} onChange={e => setCarbs(e.target.value)} /></div>
-            <div><Label>Fats (g)</Label><Input className={numInput} type="number" placeholder="70" value={fats} onChange={e => setFats(e.target.value)} /></div>
-            <div><Label>Calories</Label><Input className={numInput} type="number" placeholder="2400" value={calories} onChange={e => setCalories(e.target.value)} /></div>
-            <div><Label>Water (oz)</Label><Input className={numInput} type="number" placeholder="100" value={waterOz} onChange={e => setWaterOz(e.target.value)} /></div>
-            <div><Label>Meals</Label><Input className={numInput} type="number" placeholder="3" value={mealCount} onChange={e => setMealCount(e.target.value)} /></div>
+            <div><Label>Protein (g)</Label><Input type="number" placeholder="180" value={protein} onChange={(e) => setProtein(e.target.value)} /></div>
+            <div><Label>Carbs (g)</Label><Input type="number" placeholder="250" value={carbs} onChange={(e) => setCarbs(e.target.value)} /></div>
+            <div><Label>Fats (g)</Label><Input type="number" placeholder="70" value={fats} onChange={(e) => setFats(e.target.value)} /></div>
+            <div><Label>Calories (auto)</Label><Input type="number" placeholder="2400" value={calories} onChange={(e) => setCalories(e.target.value)} /></div>
+            <div><Label>Water (oz)</Label><Input type="number" placeholder="100" value={waterOz} onChange={(e) => setWaterOz(e.target.value)} /></div>
+            <div><Label>Meals</Label><Input type="number" placeholder="3" value={mealCount} onChange={(e) => setMealCount(e.target.value)} /></div>
           </CardContent>
         </Card>
       </div>
@@ -297,7 +269,7 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>💊 Supplements</CardTitle>
-              <Button variant="ghost" size="sm" onClick={() => setSupplements(s => [...s, { name: "", dose: "", time: "", taken: false }])}>
+              <Button variant="ghost" size="sm" onClick={() => setSupplements((s) => [...s, { name: "", dose: "", time: "", taken: false }])}>
                 <Plus className="h-4 w-4 mr-1" /> Add
               </Button>
             </div>
@@ -308,13 +280,13 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
                 <input
                   type="checkbox"
                   checked={sup.taken}
-                  onChange={e => setSupplements(s => s.map((x, j) => j === i ? { ...x, taken: e.target.checked } : x))}
-                  className="h-4 w-4 rounded border-zinc-600 bg-zinc-800 accent-blue-500"
+                  onChange={(e) => setSupplements((s) => s.map((x, j) => j === i ? { ...x, taken: e.target.checked } : x))}
+                  className="h-4 w-4 rounded border-zinc-600 accent-blue-500"
                 />
-                <Input placeholder="Name" value={sup.name} onChange={e => setSupplements(s => s.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} className="flex-1" />
-                <Input placeholder="Dose" value={sup.dose} onChange={e => setSupplements(s => s.map((x, j) => j === i ? { ...x, dose: e.target.value } : x))} className="w-24" />
-                <Input type="time" value={sup.time} onChange={e => setSupplements(s => s.map((x, j) => j === i ? { ...x, time: e.target.value } : x))} className="w-28" />
-                <Button variant="ghost" size="icon" onClick={() => setSupplements(s => s.filter((_, j) => j !== i))}>
+                <Input placeholder="Name" value={sup.name} onChange={(e) => setSupplements((s) => s.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} className="flex-1" />
+                <Input placeholder="Dose" value={sup.dose} onChange={(e) => setSupplements((s) => s.map((x, j) => j === i ? { ...x, dose: e.target.value } : x))} className="w-24" />
+                <Input type="time" value={sup.time} onChange={(e) => setSupplements((s) => s.map((x, j) => j === i ? { ...x, time: e.target.value } : x))} className="w-28" />
+                <Button variant="ghost" size="icon" onClick={() => setSupplements((s) => s.filter((_, j) => j !== i))}>
                   <Trash2 className="h-4 w-4 text-zinc-600" />
                 </Button>
               </div>
@@ -327,63 +299,85 @@ export function DailyLogForm({ date, existing }: DailyLogFormProps) {
       <div ref={sectionRefs.finances}>
         <Card>
           <CardHeader><CardTitle>💰 Finances</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-2 gap-4">
-            <div><Label>Income ($)</Label><Input className={numInput} type="number" placeholder="500" value={income} onChange={e => setIncome(e.target.value)} /></div>
-            <div><Label>Spend ($)</Label><Input className={numInput} type="number" placeholder="100" value={spend} onChange={e => setSpend(e.target.value)} /></div>
-            <div className="col-span-2 text-sm text-zinc-400">
-              Net: <span className={parseFloat(income) - parseFloat(spend) >= 0 ? "text-green-400" : "text-red-400"}>
-                ${((parseFloat(income) || 0) - (parseFloat(spend) || 0)).toFixed(2)}
-              </span>
-            </div>
+          <CardContent>
+            <FastAddTransaction date={date} />
           </CardContent>
         </Card>
       </div>
 
-      {/* Health Metrics */}
+      {/* Health */}
       <div ref={sectionRefs.health}>
         <Card>
           <CardHeader><CardTitle>❤️ Health Metrics</CardTitle></CardHeader>
           <CardContent className="grid grid-cols-2 md:grid-cols-5 gap-4">
-            <div><Label>Weight (lbs)</Label><Input className={numInput} type="number" step="0.1" placeholder="180" value={weight} onChange={e => setWeight(e.target.value)} /></div>
-            <div><Label>Mood (1-10)</Label><Input className={numInput} type="number" min="1" max="10" value={mood} onChange={e => setMood(e.target.value)} /></div>
-            <div><Label>Energy (1-10)</Label><Input className={numInput} type="number" min="1" max="10" value={energy} onChange={e => setEnergy(e.target.value)} /></div>
-            <div><Label>Stress (1-10)</Label><Input className={numInput} type="number" min="1" max="10" value={stress} onChange={e => setStress(e.target.value)} /></div>
-            <div><Label>Focus (1-10)</Label><Input className={numInput} type="number" min="1" max="10" value={focus} onChange={e => setFocus(e.target.value)} /></div>
+            <div><Label>Weight (lbs)</Label><Input type="number" step="0.1" placeholder="180" value={weight} onChange={(e) => setWeight(e.target.value)} /></div>
+            <div><Label>Mood (1-10)</Label><Input type="number" min="1" max="10" value={mood} onChange={(e) => setMood(e.target.value)} /></div>
+            <div><Label>Energy (1-10)</Label><Input type="number" min="1" max="10" value={energy} onChange={(e) => setEnergy(e.target.value)} /></div>
+            <div><Label>Stress (1-10)</Label><Input type="number" min="1" max="10" value={stress} onChange={(e) => setStress(e.target.value)} /></div>
+            <div><Label>Focus (1-10)</Label><Input type="number" min="1" max="10" value={focus} onChange={(e) => setFocus(e.target.value)} /></div>
           </CardContent>
         </Card>
       </div>
 
-      {/* Entrepreneurial */}
+      {/* Projects */}
       <div ref={sectionRefs.entrepreneurial}>
         <Card>
-          <CardHeader><CardTitle>🚀 Entrepreneurial</CardTitle></CardHeader>
-          <CardContent className="grid grid-cols-2 md:grid-cols-3 gap-4">
-            <div><Label>Tasks completed</Label><Input className={numInput} type="number" placeholder="8" value={tasksCompleted} onChange={e => setTasksCompleted(e.target.value)} /></div>
-            <div><Label>Deep work (hrs)</Label><Input className={numInput} type="number" step="0.5" placeholder="4" value={deepWorkHours} onChange={e => setDeepWorkHours(e.target.value)} /></div>
-            <div><Label>Revenue activity (hrs)</Label><Input className={numInput} type="number" step="0.5" placeholder="3" value={revenueHours} onChange={e => setRevenueHours(e.target.value)} /></div>
-            <div className="col-span-2 md:col-span-3">
-              <Label>Key wins</Label>
-              <textarea
-                className="flex min-h-[60px] w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
-                placeholder="Closed deal with X, shipped feature Y..."
-                value={keyWins}
-                onChange={e => setKeyWins(e.target.value)}
-              />
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle>🚀 Project Work</CardTitle>
+              <Button variant="ghost" size="sm" onClick={addProjectLog} disabled={projects.length === 0}>
+                <Plus className="h-4 w-4 mr-1" /> Log project
+              </Button>
             </div>
-            <div className="col-span-2 md:col-span-3">
-              <Label>Blockers</Label>
-              <textarea
-                className="flex min-h-[60px] w-full rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
-                placeholder="Waiting on X, blocked by Y..."
-                value={blockers}
-                onChange={e => setBlockers(e.target.value)}
-              />
-            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {projects.length === 0 && (
+              <p className="text-sm text-zinc-500 text-center py-2">No active projects. <a href="/projects" className="text-blue-400 hover:underline">Create one</a></p>
+            )}
+            {projectLogs.map((pl, i) => (
+              <div key={i} className="rounded-lg border border-zinc-700 p-3 space-y-3">
+                <div className="flex items-center gap-3">
+                  <Select
+                    value={pl.projectId.toString()}
+                    onValueChange={(v) => setProjectLogs((logs) => logs.map((l, j) => j === i ? { ...l, projectId: parseInt(v), projectName: projects.find((p) => p.id === parseInt(v))?.name ?? "" } : l))}
+                  >
+                    <SelectTrigger className="flex-1"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {projects.map((p) => <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <Input
+                    type="number"
+                    step="0.5"
+                    placeholder="Hours"
+                    className="w-24"
+                    value={pl.hoursWorked}
+                    onChange={(e) => setProjectLogs((logs) => logs.map((l, j) => j === i ? { ...l, hoursWorked: e.target.value } : l))}
+                  />
+                  <Button variant="ghost" size="icon" onClick={() => setProjectLogs((logs) => logs.filter((_, j) => j !== i))}>
+                    <Trash2 className="h-4 w-4 text-zinc-600" />
+                  </Button>
+                </div>
+                <Input
+                  placeholder="What was completed? (required)"
+                  value={pl.whatWasCompleted}
+                  onChange={(e) => setProjectLogs((logs) => logs.map((l, j) => j === i ? { ...l, whatWasCompleted: e.target.value } : l))}
+                />
+                <Input
+                  placeholder="Blockers (optional)"
+                  value={pl.blockers}
+                  onChange={(e) => setProjectLogs((logs) => logs.map((l, j) => j === i ? { ...l, blockers: e.target.value } : l))}
+                />
+              </div>
+            ))}
+            {projectLogs.length === 0 && projects.length > 0 && (
+              <p className="text-sm text-zinc-600 text-center py-2">Click &quot;Log project&quot; to record work done today</p>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Save */}
+      {/* Save bar */}
       <div className="fixed bottom-0 left-0 right-0 border-t border-zinc-800 bg-zinc-950/95 backdrop-blur p-4 flex items-center justify-between">
         <span className="text-sm text-zinc-400">Logging {date}</span>
         <Button variant="primary" onClick={handleSave} disabled={saving} className="gap-2">

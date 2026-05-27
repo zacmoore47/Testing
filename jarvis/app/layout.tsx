@@ -3,7 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "sonner";
 import Link from "next/link";
-import { LayoutDashboard, BookOpen, BarChart2, Settings } from "lucide-react";
+import { LayoutDashboard, BookOpen, BarChart2, Settings, Rocket } from "lucide-react";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -25,6 +25,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <div className="flex items-center gap-1">
               <NavLink href="/" icon={<LayoutDashboard className="h-4 w-4" />} label="Dashboard" />
               <NavLink href="/log" icon={<BookOpen className="h-4 w-4" />} label="Log" />
+              <NavLink href="/projects" icon={<Rocket className="h-4 w-4" />} label="Projects" />
               <NavLink href="/review" icon={<BarChart2 className="h-4 w-4" />} label="Review" />
               <NavLink href="/settings" icon={<Settings className="h-4 w-4" />} label="Settings" />
             </div>
