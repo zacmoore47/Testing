@@ -1,9 +1,16 @@
 interface WeatherResult {
   tempCelsius: number;
+  feelsLikeCelsius: number;
+  uvIndex: number;
   condition: string;
 }
 
-let cache: { result: WeatherResult; expiresAt: number } | null = null;
+interface DailyData {
+  weather: WeatherResult | null;
+  fact: string | null;
+}
+
+let cache: { data: DailyData; expiresAt: number } | null = null;
 
 const WMO_CODES: Record<string, string> = {
   "0": "clear",
@@ -22,25 +29,63 @@ function codeToCondition(code: number): string {
   return WMO_CODES[String(code)] ?? "cloudy";
 }
 
-export async function getLondonWeather(): Promise<WeatherResult | null> {
-  if (cache && Date.now() < cache.expiresAt) return cache.result;
+function uvLabel(uv: number): string {
+  if (uv <= 2) return "low";
+  if (uv <= 5) return "moderate";
+  if (uv <= 7) return "high";
+  if (uv <= 10) return "very high";
+  return "extreme";
+}
 
+async function fetchWeather(): Promise<WeatherResult | null> {
   try {
     const res = await fetch(
-      "https://api.open-meteo.com/v1/forecast?latitude=51.5074&longitude=-0.1278&current=temperature_2m,weather_code&temperature_unit=celsius",
+      "https://api.open-meteo.com/v1/forecast?latitude=51.5074&longitude=-0.1278&current=temperature_2m,apparent_temperature,weather_code,uv_index&temperature_unit=celsius",
       { next: { revalidate: 900 } }
     );
     if (!res.ok) return null;
     const data = await res.json() as {
-      current: { temperature_2m: number; weather_code: number };
+      current: {
+        temperature_2m: number;
+        apparent_temperature: number;
+        weather_code: number;
+        uv_index: number;
+      };
     };
-    const result: WeatherResult = {
+    return {
       tempCelsius: Math.round(data.current.temperature_2m),
+      feelsLikeCelsius: Math.round(data.current.apparent_temperature),
+      uvIndex: Math.round(data.current.uv_index),
       condition: codeToCondition(data.current.weather_code),
     };
-    cache = { result, expiresAt: Date.now() + 15 * 60 * 1000 };
-    return result;
   } catch {
     return null;
   }
 }
+
+async function fetchDailyFact(): Promise<string | null> {
+  try {
+    const now = new Date();
+    const month = now.getMonth() + 1;
+    const day = now.getDate();
+    const res = await fetch(`https://numbersapi.com/${month}/${day}/date?json`, {
+      next: { revalidate: 86400 },
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as { text: string; found: boolean };
+    return data.found ? data.text : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function getLondonWeatherAndFact(): Promise<DailyData> {
+  if (cache && Date.now() < cache.expiresAt) return cache.data;
+
+  const [weather, fact] = await Promise.all([fetchWeather(), fetchDailyFact()]);
+  const data: DailyData = { weather, fact };
+  cache = { data, expiresAt: Date.now() + 15 * 60 * 1000 };
+  return data;
+}
+
+export { uvLabel };

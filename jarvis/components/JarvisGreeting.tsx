@@ -16,23 +16,49 @@ function getTimeOfDayWord(): string {
   return "evening";
 }
 
-async function fetchWeatherLine(): Promise<string> {
+interface WeatherData {
+  weather: { tempCelsius: number; feelsLikeCelsius: number; uvIndex: number; condition: string } | null;
+  fact: string | null;
+}
+
+function uvLabel(uv: number): string {
+  if (uv <= 2) return "low";
+  if (uv <= 5) return "moderate";
+  if (uv <= 7) return "high";
+  if (uv <= 10) return "very high";
+  return "extreme";
+}
+
+async function fetchWeatherAndFact(): Promise<WeatherData> {
   try {
     const res = await fetch("/api/weather", { cache: "no-store" });
-    if (!res.ok) return "";
-    const data = await res.json() as { tempCelsius: number; condition: string } | null;
-    if (!data) return "";
-    return `The weather in London is currently ${data.tempCelsius} degrees and ${data.condition}.`;
+    if (!res.ok) return { weather: null, fact: null };
+    return await res.json() as WeatherData;
   } catch {
-    return "";
+    return { weather: null, fact: null };
   }
 }
 
-function buildGreeting(tod: string, weatherLine: string, taskTitle: string | null): string {
+function buildGreeting(tod: string, weatherData: WeatherData, taskTitle: string | null): string {
+  const parts: string[] = [`Good ${tod}, Sir.`];
+
+  if (weatherData.weather) {
+    const { tempCelsius, feelsLikeCelsius, uvIndex, condition } = weatherData.weather;
+    parts.push(
+      `The weather in London is currently ${tempCelsius} degrees and ${condition}, feeling like ${feelsLikeCelsius} degrees, with a ${uvLabel(uvIndex)} UV index.`
+    );
+  }
+
   const task = taskTitle
     ? `Your highest priority task today is: ${taskTitle}.`
     : "You have no pending tasks. A rare and beautiful sight, Sir.";
-  return [`Good ${tod}, Sir.`, weatherLine, task].filter(Boolean).join(" ");
+  parts.push(task);
+
+  if (weatherData.fact) {
+    parts.push(`And on this day — ${weatherData.fact}`);
+  }
+
+  return parts.join(" ");
 }
 
 export function JarvisGreeting({ topTaskTitle }: Props) {
@@ -53,8 +79,8 @@ export function JarvisGreeting({ topTaskTitle }: Props) {
     if (hasAttempted.current) return;
     hasAttempted.current = true;
 
-    fetchWeatherLine().then((weatherLine) => {
-      const text = buildGreeting(getTimeOfDayWord(), weatherLine, topTaskTitle);
+    fetchWeatherAndFact().then((weatherData) => {
+      const text = buildGreeting(getTimeOfDayWord(), weatherData, topTaskTitle);
       greetingRef.current = text;
       sessionStorage.setItem(GREETED_KEY, "1");
 
@@ -100,8 +126,8 @@ export function JarvisGreeting({ topTaskTitle }: Props) {
     if (text) {
       replay(text);
     } else {
-      fetchWeatherLine().then((weatherLine) => {
-        const t = buildGreeting(getTimeOfDayWord(), weatherLine, topTaskTitle);
+      fetchWeatherAndFact().then((weatherData) => {
+        const t = buildGreeting(getTimeOfDayWord(), weatherData, topTaskTitle);
         greetingRef.current = t;
         replay(t);
       });
