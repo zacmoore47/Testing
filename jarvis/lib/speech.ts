@@ -51,7 +51,7 @@ export function speak(
     window.speechSynthesis.cancel();
 
     const utter = new SpeechSynthesisUtterance(text);
-    utter.rate = settings?.rate ?? 0.95;
+    utter.rate = settings?.rate ?? 1.1;
     utter.pitch = settings?.pitch ?? 0.85;
     utter.volume = settings?.volume ?? 1.0;
 

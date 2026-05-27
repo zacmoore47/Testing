@@ -33,7 +33,7 @@ export function useJarvisVoice(): JarvisVoiceHook {
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [settings, setSettings] = useState<VoiceSettings>({
-    rate: 0.95,
+    rate: 1.1,
     pitch: 0.85,
     volume: 1.0,
     voiceName: null,
@@ -42,7 +42,7 @@ export function useJarvisVoice(): JarvisVoiceHook {
   useEffect(() => {
     setIsMuted(loadBool(MUTE_KEY, false));
     setSettings({
-      rate: loadNum(RATE_KEY, 0.95),
+      rate: loadNum(RATE_KEY, 1.1),
       pitch: loadNum(PITCH_KEY, 0.85),
       volume: 1.0,
       voiceName: localStorage.getItem(VOICE_KEY),
