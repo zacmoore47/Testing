@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Save, Download, Volume2 } from "lucide-react";
+import { Save, Download, Volume2, Copy, RefreshCw, Eye, EyeOff, ExternalLink } from "lucide-react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { speak, getAvailableEnglishVoices } from "@/lib/speech";
 
@@ -25,6 +26,14 @@ interface Profile {
   targetProjectHours: number;
   maxCaffeineMg: number;
   overallGoals: string;
+  defaultWorkMinutes: number;
+  defaultShortBreak: number;
+  defaultLongBreak: number;
+  sessionsBeforeLongBreak: number;
+  autoStartBreaks: boolean;
+  autoStartWork: boolean;
+  ambientSoundDefault: boolean;
+  apiTokenMasked: string | null;
 }
 
 const RATE_KEY = "jarvis_voice_rate";
@@ -40,6 +49,13 @@ export default function SettingsPage() {
   const [voicePitch, setVoicePitch] = useState(0.85);
   const [voiceName, setVoiceName] = useState<string>("");
   const [voiceMuted, setVoiceMuted] = useState(false);
+  const [newToken, setNewToken] = useState<string | null>(null);
+  const [showToken, setShowToken] = useState(false);
+  const [generatingToken, setGeneratingToken] = useState(false);
+  const [testEndpoint, setTestEndpoint] = useState("expense");
+  const [testBody, setTestBody] = useState('{"amount": 10, "category": "Food", "description": "Test"}');
+  const [testResult, setTestResult] = useState<string | null>(null);
+  const [testing, setTesting] = useState(false);
 
   useEffect(() => {
     const rate = parseFloat(localStorage.getItem(RATE_KEY) ?? "0.95");
@@ -67,6 +83,63 @@ export default function SettingsPage() {
   function handleVoiceTest() {
     void speak("Systems online, Sir.", { rate: voiceRate, pitch: voicePitch, voiceName: voiceName || null });
   }
+
+  async function handleGenerateToken() {
+    if (!confirm("This will invalidate your existing API token and break any configured Shortcuts. Continue?")) return;
+    setGeneratingToken(true);
+    try {
+      const res = await fetch("/api/profile", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ generateToken: true }),
+      });
+      const data = await res.json();
+      setNewToken(data.newToken);
+      setShowToken(true);
+      setProfile((p) => p ? { ...p, apiTokenMasked: data.apiTokenMasked } : p);
+      toast.success("New token generated");
+    } catch {
+      toast.error("Failed to generate token");
+    } finally {
+      setGeneratingToken(false);
+    }
+  }
+
+  async function handleTestRequest() {
+    if (!profile?.apiTokenMasked && !newToken) { toast.error("Generate an API token first"); return; }
+    setTesting(true);
+    try {
+      let body: Record<string, unknown> = {};
+      try { body = JSON.parse(testBody); } catch { toast.error("Invalid JSON in body"); setTesting(false); return; }
+      const token = newToken ?? "";
+      const method = testEndpoint === "status" ? "GET" : "POST";
+      const res = await fetch(`/api/shortcuts/${testEndpoint}`, {
+        method,
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        ...(method === "POST" ? { body: JSON.stringify(body) } : {}),
+      });
+      const data = await res.json();
+      setTestResult(JSON.stringify(data, null, 2));
+    } catch (e) {
+      setTestResult(String(e));
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  const baseUrl = typeof window !== "undefined" ? window.location.origin : "http://localhost:3000";
+
+  const SHORTCUT_ENDPOINTS = [
+    { id: "expense", label: "Log Expense", example: '{"amount": 15.50, "category": "Food", "description": "Coffee"}' },
+    { id: "income", label: "Log Income", example: '{"amount": 500, "source": "Client A"}' },
+    { id: "task", label: "Add Task", example: '{"title": "Follow up with client", "priority": 2}' },
+    { id: "habit-complete", label: "Complete Habit", example: '{"habitName": "Morning workout"}' },
+    { id: "sleep", label: "Log Sleep", example: '{"hours": 7.5, "quality": 8, "bedtime": "23:00", "waketime": "06:30"}' },
+    { id: "workout", label: "Log Workout", example: '{"type": "strength", "duration": 45, "intensity": 8}' },
+    { id: "project-log", label: "Log Project Work", example: '{"projectName": "SaaS", "hoursWorked": 2, "whatWasCompleted": "Built auth"}' },
+    { id: "quick-stat", label: "Quick Stats", example: '{"mood": 8, "energy": 7, "caffeine": 150}' },
+    { id: "status", label: "Daily Status (GET)", example: "" },
+  ];
 
   useEffect(() => {
     fetch("/api/profile").then((r) => r.json()).then(setProfile).catch(() => toast.error("Failed to load settings"));
@@ -187,6 +260,137 @@ export default function SettingsPage() {
             onChange={(e) => set("overallGoals", e.target.value)}
             placeholder="e.g. Build a $10k/mo business while getting to 175lbs and 8% body fat..."
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>⏱ Focus Mode</CardTitle></CardHeader>
+        <CardContent className="grid grid-cols-2 gap-4">
+          <div><Label>Work session (min)</Label><Input type="number" min={1} max={120} value={profile.defaultWorkMinutes} onChange={(e) => set("defaultWorkMinutes", parseInt(e.target.value))} /></div>
+          <div><Label>Short break (min)</Label><Input type="number" min={1} max={30} value={profile.defaultShortBreak} onChange={(e) => set("defaultShortBreak", parseInt(e.target.value))} /></div>
+          <div><Label>Long break (min)</Label><Input type="number" min={1} max={60} value={profile.defaultLongBreak} onChange={(e) => set("defaultLongBreak", parseInt(e.target.value))} /></div>
+          <div><Label>Sessions before long break</Label><Input type="number" min={1} max={8} value={profile.sessionsBeforeLongBreak} onChange={(e) => set("sessionsBeforeLongBreak", parseInt(e.target.value))} /></div>
+          <div className="flex items-center justify-between col-span-2">
+            <Label>Auto-start breaks</Label>
+            <button onClick={() => set("autoStartBreaks", !profile.autoStartBreaks)} className={`relative inline-flex h-6 w-11 rounded-full transition-colors ${profile.autoStartBreaks ? "bg-blue-500" : "bg-zinc-700"}`}>
+              <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform mt-0.5 ${profile.autoStartBreaks ? "translate-x-5" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+          <div className="flex items-center justify-between col-span-2">
+            <Label>Auto-start next work session</Label>
+            <button onClick={() => set("autoStartWork", !profile.autoStartWork)} className={`relative inline-flex h-6 w-11 rounded-full transition-colors ${profile.autoStartWork ? "bg-blue-500" : "bg-zinc-700"}`}>
+              <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform mt-0.5 ${profile.autoStartWork ? "translate-x-5" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+          <div className="flex items-center justify-between col-span-2">
+            <Label>Ambient sound on by default</Label>
+            <button onClick={() => set("ambientSoundDefault", !profile.ambientSoundDefault)} className={`relative inline-flex h-6 w-11 rounded-full transition-colors ${profile.ambientSoundDefault ? "bg-blue-500" : "bg-zinc-700"}`}>
+              <span className={`inline-block h-5 w-5 rounded-full bg-white shadow transition-transform mt-0.5 ${profile.ambientSoundDefault ? "translate-x-5" : "translate-x-0.5"}`} />
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <CardTitle>📱 iOS Shortcuts</CardTitle>
+            <Link href="/settings/api-logs" className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300">
+              API logs <ExternalLink className="h-3 w-3" />
+            </Link>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Token */}
+          <div className="space-y-3">
+            <Label>API Token</Label>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <Input
+                  readOnly
+                  value={newToken && showToken ? newToken : (profile.apiTokenMasked ?? "No token generated")}
+                  className="font-mono text-xs pr-10"
+                />
+                {(newToken || profile.apiTokenMasked) && (
+                  <button onClick={() => setShowToken(!showToken)} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300">
+                    {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                )}
+              </div>
+              {newToken && showToken && (
+                <Button variant="outline" className="gap-1 text-xs" onClick={() => { void navigator.clipboard.writeText(newToken); toast.success("Token copied"); }}>
+                  <Copy className="h-3.5 w-3.5" />
+                </Button>
+              )}
+              <Button variant="outline" className="gap-1.5 text-xs" onClick={handleGenerateToken} disabled={generatingToken}>
+                <RefreshCw className="h-3.5 w-3.5" /> Generate
+              </Button>
+            </div>
+            {newToken && <p className="text-xs text-orange-400">⚠ Copy this token now — it won&apos;t be shown again.</p>}
+          </div>
+
+          {/* Base URL */}
+          <div className="space-y-1.5">
+            <Label>Base URL</Label>
+            <div className="flex gap-2">
+              <Input readOnly value={baseUrl} className="font-mono text-xs" />
+              <Button variant="outline" className="gap-1 text-xs" onClick={() => { void navigator.clipboard.writeText(baseUrl); toast.success("URL copied"); }}>
+                <Copy className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          </div>
+
+          {/* Endpoint guide */}
+          <div className="space-y-2">
+            <Label>Available endpoints</Label>
+            <div className="space-y-1.5 text-xs font-mono">
+              {SHORTCUT_ENDPOINTS.map((ep) => (
+                <div key={ep.id} className="flex items-start gap-2 rounded bg-zinc-800/50 px-3 py-2">
+                  <span className="text-zinc-500 shrink-0">{ep.id === "status" ? "GET" : "POST"}</span>
+                  <span className="text-blue-400">/api/shortcuts/{ep.id}</span>
+                  <span className="text-zinc-600 ml-auto shrink-0">{ep.label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Setup guide */}
+          <div className="rounded-lg border border-zinc-800 bg-zinc-900/50 p-4 space-y-2 text-sm text-zinc-400">
+            <p className="font-medium text-zinc-300">iPhone Shortcut setup (example: Log Expense)</p>
+            <ol className="list-decimal list-inside space-y-1 text-xs">
+              <li>Open the Shortcuts app → tap + → Add Action</li>
+              <li>Search for <strong className="text-zinc-300">URL</strong> and add it — enter: <code className="text-blue-400">{baseUrl}/api/shortcuts/expense</code></li>
+              <li>Add a <strong className="text-zinc-300">Get Contents of URL</strong> action — Method: POST</li>
+              <li>Add header: <code className="text-zinc-300">Authorization</code> = <code className="text-zinc-300">Bearer YOUR_TOKEN</code></li>
+              <li>Set body to JSON: <code className="text-zinc-300">{`{"amount": [Ask Each Time], "category": "Food"}`}</code></li>
+              <li>Add a <strong className="text-zinc-300">Show Result</strong> action &mdash; Siri will read the response aloud</li>
+              <li>Add to Siri with a phrase like <strong className="text-zinc-300">&ldquo;Log expense&rdquo;</strong></li>
+            </ol>
+          </div>
+
+          {/* Test panel */}
+          <div className="space-y-3">
+            <Label>Test an endpoint</Label>
+            <Select value={testEndpoint} onValueChange={(v) => { setTestEndpoint(v); const ep = SHORTCUT_ENDPOINTS.find((e) => e.id === v); setTestBody(ep?.example ?? ""); }}>
+              <SelectTrigger className="text-xs h-8"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {SHORTCUT_ENDPOINTS.map((ep) => <SelectItem key={ep.id} value={ep.id} className="text-xs">{ep.label}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            {testEndpoint !== "status" && (
+              <textarea
+                value={testBody}
+                onChange={(e) => setTestBody(e.target.value)}
+                className="w-full h-20 rounded-lg border border-zinc-700 bg-zinc-800 px-3 py-2 text-xs font-mono text-zinc-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400"
+              />
+            )}
+            <Button variant="outline" className="text-xs h-8 gap-1.5" onClick={handleTestRequest} disabled={testing}>
+              {testing ? "Sending..." : "Send test request"}
+            </Button>
+            {testResult && (
+              <pre className="rounded-lg bg-zinc-800 p-3 text-xs font-mono text-zinc-300 overflow-auto max-h-40">{testResult}</pre>
+            )}
+          </div>
         </CardContent>
       </Card>
 

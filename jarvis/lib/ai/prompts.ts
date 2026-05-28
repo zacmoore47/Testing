@@ -29,7 +29,7 @@ Sector definitions:
 - supplements: % of supplements taken today
 - finances: net positive today?, trending toward monthly savings goal, category overspend vs 30-day average
 - health: mood/energy/focus/stress subjective ratings
-- entrepreneurial: total project hours today vs goal, are active projects getting consistent attention
+- entrepreneurial: total project hours today vs goal, are active projects getting consistent attention, focus session count and total minutes (reward consistency, penalise zero focus days when active projects exist)
 - habits: % of active habits completed today, consistency trends per habit
 
 Output format — return ONLY this JSON, no markdown, no text outside it:

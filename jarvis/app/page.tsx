@@ -5,6 +5,7 @@ import { FocusCard } from "@/components/dashboard/FocusCard";
 import { StreakIndicator } from "@/components/dashboard/StreakIndicator";
 import { HabitTracker } from "@/components/dashboard/HabitTracker";
 import { PriorityTasksWidget } from "@/components/tasks/PriorityTasksWidget";
+import { FocusModeCard } from "@/components/dashboard/FocusModeCard";
 import { JarvisGreeting } from "@/components/JarvisGreeting";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -234,6 +235,9 @@ export default async function DashboardPage() {
           </Card>
         )}
       </div>
+
+      {/* Focus */}
+      <FocusModeCard />
 
       {/* Priority Tasks */}
       <PriorityTasksWidget initialTasks={serializedPendingTasks} />

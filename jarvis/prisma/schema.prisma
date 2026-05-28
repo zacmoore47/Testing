@@ -28,6 +28,18 @@ model UserProfile {
   targetProjectHours    Float  @default(4)
   maxCaffeineMg         Float  @default(200)
   overallGoals          String @default("Optimize performance across all life sectors. Build a successful business while maintaining peak physical and mental health.")
+
+  // Focus mode defaults
+  defaultWorkMinutes        Int     @default(25)
+  defaultShortBreak         Int     @default(5)
+  defaultLongBreak          Int     @default(15)
+  sessionsBeforeLongBreak   Int     @default(4)
+  autoStartBreaks           Boolean @default(false)
+  autoStartWork             Boolean @default(false)
+  ambientSoundDefault       Boolean @default(false)
+
+  // iOS Shortcuts API
+  apiToken                  String?
 }
 
 // ─── Daily Log (core anchor for biometric data) ────────────────────────────
@@ -158,16 +170,17 @@ model Income {
 // ─── Projects (rebuilt entrepreneurial) ──────────────────────────────────
 
 model Project {
-  id                   Int          @id @default(autoincrement())
+  id                   Int             @id @default(autoincrement())
   name                 String
   description          String?
-  status               String       @default("Active") // Active | Paused | Completed | Archived
-  priority             Int          @default(3)        // 1-5
-  color                String       @default("#60a5fa")
+  status               String          @default("Active") // Active | Paused | Completed | Archived
+  priority             Int             @default(3)        // 1-5
+  color                String          @default("#60a5fa")
   targetCompletionDate DateTime?
-  createdAt            DateTime     @default(now())
+  createdAt            DateTime        @default(now())
   logs                 ProjectLog[]
   tasks                Task[]
+  focusSessions        FocusSession[]
 }
 
 model ProjectLog {
@@ -247,9 +260,42 @@ model Task {
   project          Project?  @relation(fields: [projectId], references: [id])
   estimatedMinutes Int?
   completedAt      DateTime?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
-  order            Int       @default(0)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  order            Int            @default(0)
+  focusSessions    FocusSession[]
 
   @@index([status, priority, order])
+}
+
+// ─── Focus Sessions ───────────────────────────────────────────────────────
+
+model FocusSession {
+  id             Int       @id @default(autoincrement())
+  projectId      Int?
+  project        Project?  @relation(fields: [projectId], references: [id])
+  taskId         Int?
+  task           Task?     @relation(fields: [taskId], references: [id])
+  startedAt      DateTime  @default(now())
+  endedAt        DateTime?
+  plannedMinutes Int
+  actualMinutes  Int?
+  sessionType    String    @default("Work") // Work | ShortBreak | LongBreak
+  completed      Boolean   @default(false)
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  @@index([projectId, startedAt])
+}
+
+// ─── API Log ──────────────────────────────────────────────────────────────
+
+model ApiLog {
+  id             Int      @id @default(autoincrement())
+  endpoint       String
+  method         String
+  requestBody    String?
+  responseStatus Int
+  success        Boolean
+  createdAt      DateTime @default(now())
 }

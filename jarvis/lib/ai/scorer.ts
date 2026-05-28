@@ -43,8 +43,8 @@ export async function generateDailyAnalysis(date: Date): Promise<AIAnalysis> {
 
   if (!todayLog) throw new Error(`No daily log found for ${dateStr}`);
 
-  // Fetch finance, project, habit data for today
-  const [expenses, incomes, projectLogs, habits] = await Promise.all([
+  // Fetch finance, project, habit, and focus data for today
+  const [expenses, incomes, projectLogs, habits, focusSessions] = await Promise.all([
     prisma.expense.findMany({ where: { date: { gte: dayStart, lte: dayEnd } } }),
     prisma.income.findMany({ where: { date: { gte: dayStart, lte: dayEnd } } }),
     prisma.projectLog.findMany({
@@ -57,7 +57,13 @@ export async function generateDailyAnalysis(date: Date): Promise<AIAnalysis> {
         completions: { where: { date: { gte: dayStart, lte: dayEnd } } },
       },
     }),
+    prisma.focusSession.findMany({
+      where: { startedAt: { gte: dayStart, lte: dayEnd }, sessionType: "Work" },
+    }),
   ]);
+
+  const focusMinutesToday = focusSessions.reduce((s, f) => s + (f.actualMinutes ?? 0), 0);
+  const focusSessionCount = focusSessions.filter((f) => f.completed).length;
 
   // 30-day expense averages for finance scoring
   const cutoff30 = subDays(dayStart, 30);
@@ -67,6 +73,7 @@ export async function generateDailyAnalysis(date: Date): Promise<AIAnalysis> {
 
   const todaySerialized: Record<string, unknown> = {
     ...serializeLog(todayLog as unknown as Record<string, unknown>),
+    focus: { minutesToday: focusMinutesToday, completedSessions: focusSessionCount },
     finances: {
       expenses: expenses.map((e) => ({ amount: e.amount, category: e.category, description: e.description })),
       income: incomes.map((i) => ({ amount: i.amount, source: i.source })),

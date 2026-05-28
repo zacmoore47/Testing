@@ -231,6 +231,26 @@ export interface TaskRow {
   order: number;
 }
 
+// ─── Focus Sessions ───────────────────────────────────────────────────────
+
+export type FocusSessionType = "Work" | "ShortBreak" | "LongBreak";
+
+export interface FocusSessionRow {
+  id: number;
+  projectId: number | null;
+  taskId: number | null;
+  startedAt: string;
+  endedAt: string | null;
+  plannedMinutes: number;
+  actualMinutes: number | null;
+  sessionType: FocusSessionType;
+  completed: boolean;
+  notes: string | null;
+  createdAt: string;
+  project?: { name: string } | null;
+  task?: { title: string } | null;
+}
+
 // ─── Dashboard cards ──────────────────────────────────────────────────────
 
 export interface SparklineData {
