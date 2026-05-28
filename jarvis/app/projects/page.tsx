@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { ProjectRow, ProjectStatus } from "@/types";
 import { parseISO, formatDistanceToNow } from "date-fns";
 import Link from "next/link";
-import { Plus, Clock, Calendar } from "lucide-react";
+import { Plus, Clock, Calendar, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 const STATUS_COLORS: Record<ProjectStatus, string> = {
@@ -96,6 +96,22 @@ export default function ProjectsPage() {
   const [projects, setProjects] = useState<ProjectRow[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [filter, setFilter] = useState<string>("Active");
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  async function deleteProject(id: number) {
+    if (!confirm("Delete this project? All its logs will also be removed.")) return;
+    setDeletingId(id);
+    try {
+      const res = await fetch(`/api/projects/${id}`, { method: "DELETE" });
+      if (!res.ok) throw new Error();
+      toast.success("Project deleted");
+      await load();
+    } catch {
+      toast.error("Failed to delete project");
+    } finally {
+      setDeletingId(null);
+    }
+  }
 
   const load = useCallback(async () => {
     const res = await fetch("/api/projects");
@@ -148,9 +164,18 @@ export default function ProjectsPage() {
                   <div className="w-3 h-3 rounded-full shrink-0" style={{ background: project.color }} />
                   <h3 className="font-semibold text-zinc-100 text-sm">{project.name}</h3>
                 </div>
-                <Badge variant={STATUS_COLORS[project.status as ProjectStatus] as "green" | "yellow" | "blue" | "default"}>
-                  {project.status}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant={STATUS_COLORS[project.status as ProjectStatus] as "green" | "yellow" | "blue" | "default"}>
+                    {project.status}
+                  </Badge>
+                  <button
+                    onClick={(e) => { e.preventDefault(); e.stopPropagation(); deleteProject(project.id); }}
+                    disabled={deletingId === project.id}
+                    className="p-1 rounded hover:bg-red-900/40 text-zinc-600 hover:text-red-400 transition-colors disabled:opacity-40"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                </div>
               </div>
 
               {project.description && (
