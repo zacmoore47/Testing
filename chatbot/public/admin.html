@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chatbot Admin</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; color: #111827; font-size: 14px; }
+
+    .topbar { background: #111827; color: white; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; }
+    .topbar h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.02em; }
+    .topbar .key-row { display: flex; align-items: center; gap: 8px; }
+    .topbar input { background: #1f2937; border: 1px solid #374151; color: white; padding: 6px 10px; border-radius: 6px; font-size: 13px; width: 220px; outline: none; }
+    .topbar input::placeholder { color: #6b7280; }
+    .topbar .status { font-size: 12px; color: #6b7280; }
+    .topbar .status.ok { color: #34d399; }
+
+    .container { max-width: 900px; margin: 32px auto; padding: 0 24px; }
+
+    .section-title { font-size: 13px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 14px; }
+
+    /* Add / Edit form */
+    .card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 24px; margin-bottom: 32px; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-grid .full { grid-column: 1 / -1; }
+    label { display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 5px; }
+    input[type=text], input[type=email], select, textarea {
+      width: 100%; border: 1px solid #e5e7eb; border-radius: 6px;
+      padding: 8px 10px; font-size: 13px; font-family: inherit;
+      color: #111827; background: #f9fafb; outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type=text]:focus, input[type=email]:focus, select:focus, textarea:focus { border-color: #6366f1; background: white; }
+    textarea { resize: vertical; min-height: 90px; }
+    .color-row { display: flex; align-items: center; gap: 8px; }
+    .color-row input[type=color] { width: 36px; height: 34px; border: 1px solid #e5e7eb; border-radius: 6px; padding: 2px; cursor: pointer; background: white; }
+    .color-row input[type=text] { flex: 1; }
+    .form-actions { display: flex; gap: 8px; margin-top: 18px; }
+    .btn { padding: 8px 18px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: opacity 0.15s; }
+    .btn:hover { opacity: 0.85; }
+    .btn-primary { background: #6366f1; color: white; }
+    .btn-secondary { background: #f3f4f6; color: #374151; border: 1px solid #e5e7eb; }
+    .btn-danger { background: #fee2e2; color: #dc2626; }
+    .btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* Companies table */
+    .company-list { display: flex; flex-direction: column; gap: 10px; }
+    .company-row {
+      background: white; border: 1px solid #e5e7eb; border-radius: 10px;
+      padding: 16px 20px; display: flex; align-items: center; gap: 14px;
+    }
+    .company-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .company-info { flex: 1; }
+    .company-name { font-weight: 600; font-size: 14px; }
+    .company-id { font-size: 12px; color: #9ca3af; margin-top: 2px; font-family: monospace; }
+    .company-email { font-size: 12px; color: #6b7280; margin-top: 2px; }
+    .company-actions { display: flex; gap: 6px; }
+    .embed-snippet {
+      font-size: 11px; font-family: monospace; background: #f3f4f6;
+      border: 1px solid #e5e7eb; border-radius: 6px; padding: 8px 10px;
+      color: #374151; margin-top: 10px; word-break: break-all; display: none;
+    }
+    .company-row.expanded .embed-snippet { display: block; }
+    .copy-btn { font-size: 11px; color: #6366f1; background: none; border: none; cursor: pointer; margin-top: 4px; padding: 0; }
+
+    .empty { text-align: center; color: #9ca3af; padding: 40px; }
+    .toast { position: fixed; bottom: 24px; right: 24px; background: #111827; color: white; padding: 10px 18px; border-radius: 8px; font-size: 13px; opacity: 0; transition: opacity 0.2s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Chatbot Admin</h1>
+  <div class="key-row">
+    <input type="password" id="admin-key-input" placeholder="Admin key" autocomplete="off">
+    <span class="status" id="auth-status"></span>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- Add / Edit Company -->
+  <div class="section-title" id="form-title">Add New Client</div>
+  <div class="card">
+    <div class="form-grid">
+      <div>
+        <label>Company ID <span style="color:#9ca3af;font-weight:400">(slug, no spaces e.g. acme-corp)</span></label>
+        <input type="text" id="f-id" placeholder="acme-corp">
+      </div>
+      <div>
+        <label>Bot Name</label>
+        <input type="text" id="f-name" placeholder="ACME Support">
+      </div>
+      <div>
+        <label>Brand Colour</label>
+        <div class="color-row">
+          <input type="color" id="f-color-picker" value="#6366f1">
+          <input type="text" id="f-color" value="#6366f1" placeholder="#6366f1" maxlength="7">
+        </div>
+      </div>
+      <div>
+        <label>Support Email</label>
+        <input type="email" id="f-email" placeholder="support@client.com">
+      </div>
+      <div class="full">
+        <label>Welcome Message</label>
+        <input type="text" id="f-welcome" placeholder="Hi! How can I help you today?">
+      </div>
+      <div class="full">
+        <label>System Prompt <span style="color:#9ca3af;font-weight:400">(instructions for the bot)</span></label>
+        <textarea id="f-prompt" placeholder="You are a helpful support agent for ACME Corp. Help customers with..."></textarea>
+      </div>
+      <div>
+        <label>Model</label>
+        <select id="f-model">
+          <option value="claude-opus-4-7">Claude Opus (best quality)</option>
+          <option value="claude-sonnet-4-6">Claude Sonnet (faster)</option>
+          <option value="claude-haiku-4-5-20251001">Claude Haiku (cheapest)</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button class="btn btn-primary" id="save-btn" onclick="saveCompany()">Add Client</button>
+      <button class="btn btn-secondary" id="cancel-btn" onclick="cancelEdit()" style="display:none">Cancel</button>
+    </div>
+  </div>
+
+  <!-- Company List -->
+  <div class="section-title">Your Clients</div>
+  <div class="company-list" id="company-list">
+    <div class="empty">Enter your admin key above to load clients</div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+  const SERVER = window.location.origin;
+  let editingId = null;
+
+  const keyInput = document.getElementById('admin-key-input');
+  keyInput.addEventListener('change', loadCompanies);
+  keyInput.addEventListener('keydown', e => { if (e.key === 'Enter') loadCompanies(); });
+
+  // Sync color picker <-> text input
+  const colorPicker = document.getElementById('f-color-picker');
+  const colorText = document.getElementById('f-color');
+  colorPicker.addEventListener('input', () => { colorText.value = colorPicker.value; });
+  colorText.addEventListener('input', () => {
+    if (/^#[0-9a-fA-F]{6}$/.test(colorText.value)) colorPicker.value = colorText.value;
+  });
+
+  function adminKey() { return keyInput.value.trim(); }
+
+  async function loadCompanies() {
+    if (!adminKey()) return;
+    const res = await fetch(`${SERVER}/admin/companies`, { headers: { 'x-admin-key': adminKey() } });
+    const status = document.getElementById('auth-status');
+    if (res.status === 401) { status.textContent = 'Wrong key'; status.className = 'status'; renderList(null); return; }
+    status.textContent = 'Authenticated'; status.className = 'status ok';
+    const data = await res.json();
+    renderList(data);
+  }
+
+  function renderList(companies) {
+    const list = document.getElementById('company-list');
+    if (!companies || Object.keys(companies).length === 0) {
+      list.innerHTML = '<div class="empty">No clients yet — add one above</div>'; return;
+    }
+    list.innerHTML = Object.entries(companies).map(([id, c]) => `
+      <div class="company-row" id="row-${id}">
+        <div class="company-dot" style="background:${c.primaryColor}"></div>
+        <div class="company-info">
+          <div class="company-name">${esc(c.botName)}</div>
+          <div class="company-id">${esc(id)}</div>
+          ${c.supportEmail ? `<div class="company-email">${esc(c.supportEmail)}</div>` : ''}
+          <div class="embed-snippet" id="snippet-${id}">&lt;script src="${SERVER}/chatbot.js" data-company-id="${id}"&gt;&lt;/script&gt;<br><button class="copy-btn" onclick="copySnippet('${id}')">Copy embed code</button></div>
+        </div>
+        <div class="company-actions">
+          <button class="btn btn-secondary" onclick="toggleSnippet('${id}')">Embed code</button>
+          <button class="btn btn-secondary" onclick="startEdit('${id}')">Edit</button>
+          <button class="btn btn-danger" onclick="deleteCompany('${id}')">Delete</button>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function toggleSnippet(id) {
+    document.getElementById(`row-${id}`).classList.toggle('expanded');
+  }
+
+  function copySnippet(id) {
+    const text = `<script src="${SERVER}/chatbot.js" data-company-id="${id}"><\/script>`;
+    navigator.clipboard.writeText(text).then(() => toast('Copied!'));
+  }
+
+  async function saveCompany() {
+    const id = document.getElementById('f-id').value.trim().toLowerCase().replace(/\s+/g, '-');
+    const botName = document.getElementById('f-name').value.trim();
+    const systemPrompt = document.getElementById('f-prompt').value.trim();
+    if (!id || !botName || !systemPrompt) { toast('ID, name and system prompt are required'); return; }
+
+    const body = {
+      botName,
+      primaryColor: document.getElementById('f-color').value || '#6366f1',
+      welcomeMessage: document.getElementById('f-welcome').value.trim() || 'Hi! How can I help you today?',
+      systemPrompt,
+      supportEmail: document.getElementById('f-email').value.trim(),
+      model: document.getElementById('f-model').value,
+    };
+
+    const url = editingId ? `${SERVER}/admin/companies/${editingId}` : `${SERVER}/admin/companies`;
+    const method = editingId ? 'PUT' : 'POST';
+    if (!editingId) body.id = id;
+
+    const res = await fetch(url, {
+      method,
+      headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey() },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) { const e = await res.json(); toast(e.error || 'Error'); return; }
+    toast(editingId ? 'Client updated' : 'Client added');
+    cancelEdit();
+    loadCompanies();
+  }
+
+  function startEdit(id) {
+    fetch(`${SERVER}/admin/companies`, { headers: { 'x-admin-key': adminKey() } })
+      .then(r => r.json()).then(companies => {
+        const c = companies[id];
+        editingId = id;
+        document.getElementById('f-id').value = id;
+        document.getElementById('f-id').disabled = true;
+        document.getElementById('f-name').value = c.botName;
+        document.getElementById('f-color').value = c.primaryColor;
+        document.getElementById('f-color-picker').value = c.primaryColor;
+        document.getElementById('f-welcome').value = c.welcomeMessage;
+        document.getElementById('f-prompt').value = c.systemPrompt;
+        document.getElementById('f-email').value = c.supportEmail || '';
+        document.getElementById('f-model').value = c.model || 'claude-opus-4-7';
+        document.getElementById('form-title').textContent = `Editing: ${c.botName}`;
+        document.getElementById('save-btn').textContent = 'Save Changes';
+        document.getElementById('cancel-btn').style.display = 'inline-block';
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+  }
+
+  function cancelEdit() {
+    editingId = null;
+    document.getElementById('f-id').value = '';
+    document.getElementById('f-id').disabled = false;
+    document.getElementById('f-name').value = '';
+    document.getElementById('f-color').value = '#6366f1';
+    document.getElementById('f-color-picker').value = '#6366f1';
+    document.getElementById('f-welcome').value = '';
+    document.getElementById('f-prompt').value = '';
+    document.getElementById('f-email').value = '';
+    document.getElementById('f-model').value = 'claude-opus-4-7';
+    document.getElementById('form-title').textContent = 'Add New Client';
+    document.getElementById('save-btn').textContent = 'Add Client';
+    document.getElementById('cancel-btn').style.display = 'none';
+  }
+
+  async function deleteCompany(id) {
+    if (!confirm(`Delete ${id}? This cannot be undone.`)) return;
+    const res = await fetch(`${SERVER}/admin/companies/${id}`, {
+      method: 'DELETE',
+      headers: { 'x-admin-key': adminKey() },
+    });
+    if (!res.ok) { toast('Error deleting'); return; }
+    toast('Client deleted');
+    loadCompanies();
+  }
+
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2500);
+  }
+
+  function esc(str) {
+    return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+</script>
+</body>
+</html>
