@@ -64,7 +64,13 @@ export function speak(
         if (preferred) utter.voice = preferred;
       }
       utter.onend = () => resolve();
-      utter.onerror = (e) => reject(new Error(e.error));
+      // not-allowed = browser blocked before user gesture (expected on fresh load)
+      // interrupted = cancelled by a subsequent speak() call
+      // Both are non-fatal — resolve silently so the deferred listener can retry
+      utter.onerror = (e) => {
+        if (e.error === "not-allowed" || e.error === "interrupted") resolve();
+        else reject(new Error(e.error));
+      };
       window.speechSynthesis.speak(utter);
     };
 
