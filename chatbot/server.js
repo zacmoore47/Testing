@@ -4,7 +4,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
 import nodemailer from 'nodemailer';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -30,6 +30,63 @@ function getCompany(companyId) {
   const companies = loadCompanies();
   return companies[companyId] ?? null;
 }
+
+function saveCompanies(data) {
+  writeFileSync(
+    path.join(__dirname, 'config/companies.json'),
+    JSON.stringify(data, null, 2),
+    'utf-8'
+  );
+}
+
+// --- Admin auth middleware ---
+function adminAuth(req, res, next) {
+  const key = req.headers['x-admin-key'];
+  if (!process.env.ADMIN_KEY || key !== process.env.ADMIN_KEY) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+}
+
+// --- Admin endpoints ---
+app.get('/admin/companies', adminAuth, (req, res) => {
+  res.json(loadCompanies());
+});
+
+app.post('/admin/companies', adminAuth, (req, res) => {
+  const { id, botName, primaryColor, welcomeMessage, systemPrompt, supportEmail, model } = req.body;
+  if (!id || !botName || !systemPrompt) {
+    return res.status(400).json({ error: 'id, botName, and systemPrompt are required' });
+  }
+  const companies = loadCompanies();
+  if (companies[id]) return res.status(409).json({ error: 'Company ID already exists' });
+  companies[id] = {
+    botName,
+    primaryColor: primaryColor || '#6366f1',
+    welcomeMessage: welcomeMessage || `Hi! How can I help you today?`,
+    systemPrompt,
+    supportEmail: supportEmail || '',
+    model: model || 'claude-opus-4-7',
+  };
+  saveCompanies(companies);
+  res.status(201).json({ ok: true, id });
+});
+
+app.put('/admin/companies/:id', adminAuth, (req, res) => {
+  const companies = loadCompanies();
+  if (!companies[req.params.id]) return res.status(404).json({ error: 'Company not found' });
+  companies[req.params.id] = { ...companies[req.params.id], ...req.body };
+  saveCompanies(companies);
+  res.json({ ok: true });
+});
+
+app.delete('/admin/companies/:id', adminAuth, (req, res) => {
+  const companies = loadCompanies();
+  if (!companies[req.params.id]) return res.status(404).json({ error: 'Company not found' });
+  delete companies[req.params.id];
+  saveCompanies(companies);
+  res.json({ ok: true });
+});
 
 // --- Serve the embeddable widget ---
 app.get('/chatbot.js', (req, res) => {
