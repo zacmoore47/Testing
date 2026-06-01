@@ -93,6 +93,11 @@ app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public/admin.html'));
 });
 
+// --- Serve test page ---
+app.get('/test', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public/test.html'));
+});
+
 // --- Serve the embeddable widget ---
 app.get('/chatbot.js', (req, res) => {
   res.setHeader('Content-Type', 'application/javascript');

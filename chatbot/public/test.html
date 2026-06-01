@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chatbot Test Page</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f9fafb; color: #111827; }
+
+    header { background: #111827; color: white; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+    header h1 { font-size: 16px; font-weight: 600; }
+    header p { font-size: 12px; color: #6b7280; }
+
+    .container { max-width: 700px; margin: 48px auto; padding: 0 24px; }
+
+    .card { background: white; border: 1px solid #e5e7eb; border-radius: 10px; padding: 28px; margin-bottom: 20px; }
+    h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+
+    label { display: block; font-size: 12px; font-weight: 500; color: #374151; margin-bottom: 5px; }
+    select, input[type=text] {
+      width: 100%; border: 1px solid #e5e7eb; border-radius: 6px;
+      padding: 8px 10px; font-size: 13px; color: #111827;
+      background: #f9fafb; outline: none; transition: border-color 0.15s;
+    }
+    select:focus, input[type=text]:focus { border-color: #6366f1; background: white; }
+
+    .btn { display: inline-block; padding: 9px 20px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: none; background: #6366f1; color: white; transition: opacity 0.15s; margin-top: 14px; }
+    .btn:hover { opacity: 0.85; }
+    .btn-outline { background: white; color: #374151; border: 1px solid #e5e7eb; margin-left: 8px; }
+
+    .status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 4px; }
+    .status-item { background: #f3f4f6; border-radius: 8px; padding: 14px; }
+    .status-item .label { font-size: 11px; color: #6b7280; margin-bottom: 4px; font-weight: 500; }
+    .status-item .value { font-size: 13px; font-weight: 600; color: #111827; }
+    .status-item .value.ok { color: #059669; }
+    .status-item .value.fail { color: #dc2626; }
+    .status-item .value.pending { color: #9ca3af; }
+
+    .snippet-box { background: #1e293b; color: #7dd3fc; border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; margin-top: 12px; word-break: break-all; }
+    .copy-btn { background: none; border: 1px solid #374151; color: #94a3b8; font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer; margin-top: 8px; }
+    .copy-btn:hover { background: #1f2937; }
+
+    .tip { font-size: 12px; color: #6b7280; margin-top: 10px; line-height: 1.5; }
+    .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Chatbot Test Page</h1>
+    <p>Powered by ZM</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- Company selector -->
+  <div class="card">
+    <h2>Select a company to test</h2>
+    <label for="company-select">Company</label>
+    <select id="company-select">
+      <option value="">Loading companies...</option>
+    </select>
+    <br>
+    <button class="btn" onclick="loadCompany()">Load Chatbot</button>
+    <button class="btn btn-outline" onclick="window.location.href='/admin'">Go to Admin</button>
+  </div>
+
+  <!-- Status checks -->
+  <div class="card" id="status-card" style="display:none">
+    <h2 id="status-title">Testing: —</h2>
+    <div class="status-grid">
+      <div class="status-item">
+        <div class="label">Config loaded</div>
+        <div class="value pending" id="check-config">—</div>
+      </div>
+      <div class="status-item">
+        <div class="label">Brand colour</div>
+        <div class="value pending" id="check-color">—</div>
+      </div>
+      <div class="status-item">
+        <div class="label">Chat widget visible</div>
+        <div class="value pending" id="check-widget">—</div>
+      </div>
+      <div class="status-item">
+        <div class="label">API responding</div>
+        <div class="value pending" id="check-api">—</div>
+      </div>
+    </div>
+    <p class="tip" id="status-tip" style="margin-top:14px"></p>
+  </div>
+
+  <!-- Embed snippet -->
+  <div class="card" id="snippet-card" style="display:none">
+    <h2>Embed code for this client</h2>
+    <p class="tip">Send this single line to your client — they paste it before &lt;/body&gt; on their website.</p>
+    <div class="snippet-box" id="snippet-text"></div>
+    <button class="copy-btn" onclick="copySnippet()">Copy</button>
+  </div>
+
+</div>
+
+<div id="chatbot-container"></div>
+
+<script>
+  const SERVER = window.location.origin;
+  let currentCompanyId = null;
+  let currentScript = null;
+
+  // Load company list from admin endpoint (public fallback: try /api/config for known IDs)
+  async function loadCompanyList() {
+    // Try to get list — works if admin key is not required for listing via a public approach
+    // We'll fetch each known ID or use a trick: load the page without auth, show manual entry
+    const select = document.getElementById('company-select');
+
+    try {
+      // First try: ask admin endpoint (will fail without key — that's ok)
+      const res = await fetch(`${SERVER}/admin/companies`, { headers: { 'x-admin-key': '' } });
+      if (res.ok) {
+        const companies = await res.json();
+        populateSelect(companies);
+        return;
+      }
+    } catch {}
+
+    // Fallback: show a text input instead
+    select.outerHTML = '<input type="text" id="company-select" placeholder="Enter company ID e.g. acme-corp">';
+  }
+
+  function populateSelect(companies) {
+    const select = document.getElementById('company-select');
+    const ids = Object.keys(companies);
+    if (ids.length === 0) {
+      select.innerHTML = '<option value="">No companies found — add one in Admin</option>';
+      return;
+    }
+    select.innerHTML = ids.map(id =>
+      `<option value="${id}">${companies[id].botName} (${id})</option>`
+    ).join('');
+  }
+
+  async function loadCompany() {
+    const select = document.getElementById('company-select');
+    const id = (select.value || select.value).trim();
+    if (!id) return;
+
+    currentCompanyId = id;
+
+    // Remove existing chatbot script
+    if (currentScript) currentScript.remove();
+    const existing = document.getElementById('__chatbot_root__');
+    if (existing) existing.remove();
+    const existingStyles = document.getElementById('__chatbot_styles__');
+    if (existingStyles) existingStyles.remove();
+
+    // Show status card
+    document.getElementById('status-card').style.display = 'block';
+    document.getElementById('snippet-card').style.display = 'block';
+    document.getElementById('status-title').textContent = `Testing: ${id}`;
+    setCheck('config', 'pending', 'Checking...');
+    setCheck('color', 'pending', '—');
+    setCheck('widget', 'pending', '—');
+    setCheck('api', 'pending', '—');
+    document.getElementById('status-tip').textContent = '';
+
+    // Check 1: config
+    try {
+      const res = await fetch(`${SERVER}/api/config/${id}`);
+      if (!res.ok) throw new Error('Not found');
+      const cfg = await res.json();
+      setCheck('config', 'ok', 'Yes');
+      setCheck('color', 'ok', cfg.primaryColor);
+      document.getElementById('check-color').style.color = cfg.primaryColor;
+
+      // Update snippet
+      document.getElementById('snippet-text').textContent =
+        `<script src="${SERVER}/chatbot.js" data-company-id="${id}"><\/script>`;
+    } catch {
+      setCheck('config', 'fail', 'Failed — company ID not found');
+      document.getElementById('status-tip').textContent = 'This company ID does not exist. Add it via the Admin page.';
+      return;
+    }
+
+    // Check 2: load widget
+    currentScript = document.createElement('script');
+    currentScript.src = `${SERVER}/chatbot.js`;
+    currentScript.setAttribute('data-company-id', id);
+    document.body.appendChild(currentScript);
+
+    currentScript.onload = () => {
+      setTimeout(() => {
+        const widget = document.getElementById('__chatbot_btn__');
+        if (widget) {
+          setCheck('widget', 'ok', 'Visible ↘');
+          document.getElementById('status-tip').textContent = 'Chat widget loaded. Click the button in the bottom-right to open it and send a test message.';
+        } else {
+          setCheck('widget', 'fail', 'Not found');
+        }
+      }, 800);
+    };
+
+    // Check 3: test API with a ping message
+    try {
+      const res = await fetch(`${SERVER}/api/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyId: id, messages: [{ role: 'user', content: 'ping' }] }),
+      });
+      setCheck('api', res.ok ? 'ok' : 'fail', res.ok ? 'Responding' : `Error ${res.status}`);
+    } catch {
+      setCheck('api', 'fail', 'Unreachable');
+    }
+  }
+
+  function setCheck(key, state, text) {
+    const el = document.getElementById(`check-${key}`);
+    el.textContent = text;
+    el.className = `value ${state}`;
+  }
+
+  function copySnippet() {
+    const text = document.getElementById('snippet-text').textContent;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.querySelector('.copy-btn');
+      btn.textContent = 'Copied!';
+      setTimeout(() => btn.textContent = 'Copy', 2000);
+    });
+  }
+
+  loadCompanyList();
+</script>
+</body>
+</html>
