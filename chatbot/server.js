@@ -4,7 +4,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import Anthropic from '@anthropic-ai/sdk';
 import nodemailer from 'nodemailer';
-import { readFileSync, writeFileSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 
@@ -37,6 +37,43 @@ function saveCompanies(data) {
     JSON.stringify(data, null, 2),
     'utf-8'
   );
+}
+
+// --- Usage tracking ---
+const USAGE_PATH = path.join(__dirname, 'config/usage.json');
+
+function loadUsage() {
+  if (!existsSync(USAGE_PATH)) return {};
+  return JSON.parse(readFileSync(USAGE_PATH, 'utf-8'));
+}
+
+function saveUsage(data) {
+  writeFileSync(USAGE_PATH, JSON.stringify(data, null, 2), 'utf-8');
+}
+
+function currentMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function checkAndIncrementUsage(companyId, limit) {
+  const usage = loadUsage();
+  const month = currentMonth();
+  const entry = usage[companyId];
+
+  if (!entry || entry.month !== month) {
+    usage[companyId] = { month, conversations: 1 };
+    saveUsage(usage);
+    return { allowed: true, count: 1, limit };
+  }
+
+  if (entry.conversations >= limit) {
+    return { allowed: false, count: entry.conversations, limit };
+  }
+
+  entry.conversations += 1;
+  saveUsage(usage);
+  return { allowed: true, count: entry.conversations, limit };
 }
 
 // --- Admin auth middleware ---
@@ -86,6 +123,23 @@ app.delete('/admin/companies/:id', adminAuth, (req, res) => {
   delete companies[req.params.id];
   saveCompanies(companies);
   res.json({ ok: true });
+});
+
+app.get('/admin/usage', adminAuth, (req, res) => {
+  const usage = loadUsage();
+  const companies = loadCompanies();
+  const month = currentMonth();
+  const result = {};
+  for (const [id, company] of Object.entries(companies)) {
+    const entry = usage[id];
+    result[id] = {
+      botName: company.botName,
+      month,
+      conversations: (entry?.month === month ? entry.conversations : 0),
+      limit: company.monthlyLimit ?? 200,
+    };
+  }
+  res.json(result);
 });
 
 // --- Serve admin dashboard ---
@@ -140,6 +194,21 @@ app.post('/api/chat', chatLimiter, async (req, res) => {
 
   if (safeMessages.length === 0 || safeMessages[safeMessages.length - 1].role !== 'user') {
     return res.status(400).json({ error: 'Last message must be from the user' });
+  }
+
+  // Count new conversations (first message only) and enforce monthly limit
+  const isNewConversation = safeMessages.filter(m => m.role === 'user').length === 1;
+  if (isNewConversation) {
+    const limit = company.monthlyLimit ?? 200;
+    const usage = checkAndIncrementUsage(companyId, limit);
+    if (!usage.allowed) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.flushHeaders();
+      res.write(`data: ${JSON.stringify({ error: 'This support chat has reached its monthly limit. Please contact us directly.' })}\n\n`);
+      res.end();
+      return;
+    }
   }
 
   // Limit conversation history to the last 20 messages to control token cost

@@ -120,6 +120,10 @@
           <option value="claude-haiku-4-5-20251001">Claude Haiku (cheapest)</option>
         </select>
       </div>
+      <div>
+        <label>Monthly conversation limit</label>
+        <input type="text" id="f-limit" value="200" placeholder="200">
+      </div>
     </div>
     <div class="form-actions">
       <button class="btn btn-primary" id="save-btn" onclick="saveCompany()">Add Client</button>
@@ -159,24 +163,36 @@
     if (!adminKey()) return;
     const res = await fetch(`${SERVER}/admin/companies`, { headers: { 'x-admin-key': adminKey() } });
     const status = document.getElementById('auth-status');
-    if (res.status === 401) { status.textContent = 'Wrong key'; status.className = 'status'; renderList(null); return; }
+    if (res.status === 401) { status.textContent = 'Wrong key'; status.className = 'status'; renderList(null, null); return; }
     status.textContent = 'Authenticated'; status.className = 'status ok';
-    const data = await res.json();
-    renderList(data);
+    const companies = await res.json();
+    const usageRes = await fetch(`${SERVER}/admin/usage`, { headers: { 'x-admin-key': adminKey() } });
+    const usage = usageRes.ok ? await usageRes.json() : {};
+    renderList(companies, usage);
   }
 
-  function renderList(companies) {
+  function renderList(companies, usage) {
     const list = document.getElementById('company-list');
     if (!companies || Object.keys(companies).length === 0) {
       list.innerHTML = '<div class="empty">No clients yet — add one above</div>'; return;
     }
-    list.innerHTML = Object.entries(companies).map(([id, c]) => `
+    list.innerHTML = Object.entries(companies).map(([id, c]) => {
+      const u = usage?.[id];
+      const count = u?.conversations ?? 0;
+      const limit = u?.limit ?? 200;
+      const pct = Math.min(100, Math.round((count / limit) * 100));
+      const barColor = pct >= 90 ? '#dc2626' : pct >= 70 ? '#f59e0b' : '#059669';
+      return `
       <div class="company-row" id="row-${id}">
         <div class="company-dot" style="background:${c.primaryColor}"></div>
         <div class="company-info">
           <div class="company-name">${esc(c.botName)}</div>
           <div class="company-id">${esc(id)}</div>
           ${c.supportEmail ? `<div class="company-email">${esc(c.supportEmail)}</div>` : ''}
+          <div style="margin-top:8px;font-size:12px;color:#6b7280">${count} / ${limit} conversations this month</div>
+          <div style="background:#f3f4f6;border-radius:4px;height:4px;margin-top:4px;width:200px">
+            <div style="background:${barColor};height:4px;border-radius:4px;width:${pct}%"></div>
+          </div>
           <div class="embed-snippet" id="snippet-${id}">&lt;script src="${SERVER}/chatbot.js" data-company-id="${id}"&gt;&lt;/script&gt;<br><button class="copy-btn" onclick="copySnippet('${id}')">Copy embed code</button></div>
         </div>
         <div class="company-actions">
@@ -184,8 +200,8 @@
           <button class="btn btn-secondary" onclick="startEdit('${id}')">Edit</button>
           <button class="btn btn-danger" onclick="deleteCompany('${id}')">Delete</button>
         </div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   }
 
   function toggleSnippet(id) {
@@ -210,6 +226,7 @@
       systemPrompt,
       supportEmail: document.getElementById('f-email').value.trim(),
       model: document.getElementById('f-model').value,
+      monthlyLimit: parseInt(document.getElementById('f-limit').value) || 200,
     };
 
     const url = editingId ? `${SERVER}/admin/companies/${editingId}` : `${SERVER}/admin/companies`;
@@ -242,6 +259,7 @@
         document.getElementById('f-prompt').value = c.systemPrompt;
         document.getElementById('f-email').value = c.supportEmail || '';
         document.getElementById('f-model').value = c.model || 'claude-opus-4-7';
+        document.getElementById('f-limit').value = c.monthlyLimit ?? 200;
         document.getElementById('form-title').textContent = `Editing: ${c.botName}`;
         document.getElementById('save-btn').textContent = 'Save Changes';
         document.getElementById('cancel-btn').style.display = 'inline-block';
@@ -260,6 +278,7 @@
     document.getElementById('f-prompt').value = '';
     document.getElementById('f-email').value = '';
     document.getElementById('f-model').value = 'claude-opus-4-7';
+    document.getElementById('f-limit').value = '200';
     document.getElementById('form-title').textContent = 'Add New Client';
     document.getElementById('save-btn').textContent = 'Add Client';
     document.getElementById('cancel-btn').style.display = 'none';

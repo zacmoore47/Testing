@@ -4,6 +4,7 @@
     "primaryColor": "#e74c3c",
     "welcomeMessage": "Hi! Welcome to ACME Corp support. How can I help you today?",
     "supportEmail": "support@acmecorp.com",
+    "monthlyLimit": 200,
     "systemPrompt": "You are a friendly customer support agent for ACME Corp, a company that sells professional tools and equipment. Help customers with: product questions, order status, returns and refunds, and general inquiries. Be concise, warm, and helpful. If you cannot answer something or the customer asks to speak to a human, respond with exactly [HANDOFF] on its own line, then a brief message telling them a human agent will be in touch shortly.",
     "model": "claude-opus-4-7"
   },
@@ -12,6 +13,7 @@
     "primaryColor": "#0ea5e9",
     "welcomeMessage": "Hey there! I'm the TechStart support bot. What can I help you with?",
     "supportEmail": "support@techstart.io",
+    "monthlyLimit": 200,
     "systemPrompt": "You are a technical support assistant for TechStart.io, a SaaS project management platform. Help users with: account setup, billing questions, how-to guides for features, bug reports, and integrations. Use friendly but slightly technical language. If you cannot answer something or the customer asks to speak to a human, respond with exactly [HANDOFF] on its own line, then a brief message telling them a human agent will be in touch shortly.",
     "model": "claude-opus-4-7"
   },
@@ -20,6 +22,7 @@
     "primaryColor": "#6366f1",
     "welcomeMessage": "Hello! I'm your support assistant. How can I help you today?",
     "supportEmail": "support@demo.com",
+    "monthlyLimit": 200,
     "systemPrompt": "You are a helpful customer support assistant. Answer questions clearly and concisely. If you cannot answer something or the customer asks to speak to a human, respond with exactly [HANDOFF] on its own line, then a brief message telling them a human agent will be in touch shortly.",
     "model": "claude-opus-4-7"
   }
