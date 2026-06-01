@@ -56,6 +56,9 @@ export async function POST(request: NextRequest) {
     // Generate email via Claude
     const scrapedSummary = formatScrapedSummary(scrapedData)
 
+    const senderSetting = await prisma.settings.findUnique({ where: { key: 'sender_name' } })
+    const senderName = senderSetting?.value || undefined
+
     const emailResult = await generateEmail({
       contactName: prospect.contactName || 'there',
       companyName: prospect.companyName,
@@ -65,6 +68,7 @@ export async function POST(request: NextRequest) {
       teamMembers: scrapedData.teamMembers.join(', ') || 'Not found',
       location: scrapedData.location || 'Unknown',
       chatbotDetected: scrapedData.chatbotDetected,
+      senderName,
     })
 
     // Save to prospect

@@ -22,6 +22,7 @@ export interface ProspectEmailData {
   teamMembers: string
   location: string
   chatbotDetected: boolean
+  senderName?: string
 }
 
 const SYSTEM_PROMPT = `You are an expert cold email copywriter helping a founder sell an AI customer service chatbot to small UK businesses.
@@ -37,6 +38,7 @@ Your job: write a short, personalised cold outreach email to the business owner.
 - Sound human, warm, and conversational — not like a template
 - Never use hollow phrases like "I hope this email finds you well" or "I wanted to reach out"
 - Address the contact by first name
+- Sign off with the sender name provided
 
 Subject line: use "A quick question about your website" unless you can think of something more specific and compelling based on what you found.
 
@@ -56,7 +58,8 @@ Website content summary: ${data.scrapedSummary || 'Not available'}
 Products/services found: ${data.products || 'Not specified'}
 Team members found: ${data.teamMembers || 'Not found'}
 Location: ${data.location || 'Unknown'}
-Chatbot already present: ${data.chatbotDetected ? 'Yes' : 'No'}`
+Chatbot already present: ${data.chatbotDetected ? 'Yes' : 'No'}
+Sender name (sign off with this name): ${data.senderName || 'the team'}`
 
   const message = await client.messages.create({
     model: 'claude-sonnet-4-20250514',

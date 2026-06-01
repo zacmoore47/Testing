@@ -6,7 +6,7 @@ import { ProspectTable } from '@/components/ProspectTable'
 import { AddProspectModal } from '@/components/AddProspectModal'
 import { CSVImport } from '@/components/CSVImport'
 import { Button } from '@/components/ui/button'
-import { Plus, RefreshCw } from 'lucide-react'
+import { Plus, RefreshCw, SendHorizonal } from 'lucide-react'
 
 interface Prospect {
   id: number
@@ -29,6 +29,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
   const [showAddModal, setShowAddModal] = useState(false)
   const [filterStatus, setFilterStatus] = useState<string>('')
+  const [bulkSending, setBulkSending] = useState(false)
 
   const fetchProspects = useCallback(async () => {
     try {
@@ -60,6 +61,35 @@ export default function DashboardPage() {
 
   const STATUS_FILTERS = ['', 'New', 'Email Draft', 'Sent', 'Replied', 'Booked', 'Not Interested']
 
+  async function handleBulkSend() {
+    const eligible = prospects.filter(
+      (p) => p.contactEmail && !['Sent', 'Replied', 'Booked'].includes(p.status)
+    )
+    if (eligible.length === 0) {
+      alert('No eligible prospects to send to (need contact email, not already sent).')
+      return
+    }
+    if (!confirm(`Generate and send emails to ${eligible.length} prospects? This cannot be undone.`)) return
+
+    setBulkSending(true)
+    try {
+      const res = await fetch('/api/bulk-send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prospectIds: eligible.map((p) => p.id) }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Bulk send failed')
+      const { summary } = data
+      alert(`Done! Sent: ${summary.sent} | Skipped: ${summary.skipped} | Errors: ${summary.errors}`)
+      fetchProspects()
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Bulk send failed')
+    } finally {
+      setBulkSending(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -78,6 +108,16 @@ export default function DashboardPage() {
             Refresh
           </Button>
           <CSVImport onImported={fetchProspects} />
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleBulkSend}
+            disabled={bulkSending}
+            className="text-blue-600 border-blue-300 hover:bg-blue-50"
+          >
+            <SendHorizonal className={`mr-2 h-4 w-4 ${bulkSending ? 'animate-pulse' : ''}`} />
+            {bulkSending ? 'Sending...' : 'Generate & Send All'}
+          </Button>
           <Button size="sm" onClick={() => setShowAddModal(true)}>
             <Plus className="mr-2 h-4 w-4" />
             Add Prospect
