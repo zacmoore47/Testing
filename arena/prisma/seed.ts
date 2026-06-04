@@ -47,14 +47,16 @@ async function main() {
     where: { email: "friend@arena.app" },
     update: {},
     create: {
-      name: "Friend",
+      name: "Jack",
       email: "friend@arena.app",
       passwordHash: await bcrypt.hash("arena123", 10),
       emoji: "🔥",
     },
   });
 
-  console.log(`✅ Users: ${zac.name} (${zac.email}), ${friend.name} (${friend.email})`);
+  // Update name if already seeded with old value
+  await prisma.user.update({ where: { email: "friend@arena.app" }, data: { name: "Jack" } });
+  console.log(`✅ Users: ${zac.name} (${zac.email}), Jack (${friend.email})`);
 
   // Delete existing habits and re-seed for idempotency
   await prisma.habit.deleteMany({});

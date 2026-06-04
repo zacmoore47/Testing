@@ -11,6 +11,7 @@ export default function Nav() {
   const links = [
     { href: "/", label: "🏟️", title: "Arena" },
     { href: "/log", label: "✅", title: "Log" },
+    { href: "/habits", label: "⚙️", title: "Habits" },
     { href: "/history", label: "📅", title: "History" },
   ];
 
