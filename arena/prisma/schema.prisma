@@ -1,0 +1,172 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  emoji        String   @default("⚡")
+  totalPoints  Int      @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  logEntries   LogEntry[]
+  streaks      Streak[]
+  seasonPoints SeasonPoints[]
+  feedItems    FeedItem[]
+  reactions    Reaction[]
+  comments     Comment[]
+  wonSeasons   Season[]       @relation("SeasonWinner")
+}
+
+enum HabitCategory {
+  HEALTH
+  WEALTH
+  LEARNING
+  MIND
+}
+
+enum HabitType {
+  BOOLEAN
+  NUMERIC
+  MILESTONE
+}
+
+enum HabitFrequency {
+  DAILY
+  WEEKLY
+  ONE_OFF
+}
+
+model Habit {
+  id          String         @id @default(cuid())
+  title       String
+  description String?
+  category    HabitCategory
+  points      Int
+  type        HabitType
+  frequency   HabitFrequency
+  isShared    Boolean        @default(true)
+  unit        String?
+  minValue    Float?
+  maxPoints   Int?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+
+  logEntries LogEntry[]
+  streaks    Streak[]
+}
+
+model LogEntry {
+  id           String   @id @default(cuid())
+  userId       String
+  habitId      String
+  date         DateTime
+  value        Float?
+  note         String?
+  proofUrl     String?
+  pointsEarned Int
+  createdAt    DateTime @default(now())
+
+  user     User      @relation(fields: [userId], references: [id])
+  habit    Habit     @relation(fields: [habitId], references: [id])
+  feedItem FeedItem?
+
+  @@unique([userId, habitId, date])
+}
+
+model Streak {
+  id          String    @id @default(cuid())
+  userId      String
+  habitId     String
+  current     Int       @default(0)
+  longest     Int       @default(0)
+  lastLogDate DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id])
+  habit Habit @relation(fields: [habitId], references: [id])
+
+  @@unique([userId, habitId])
+}
+
+enum SeasonType {
+  WEEKLY
+  MONTHLY
+}
+
+model Season {
+  id        String     @id @default(cuid())
+  type      SeasonType
+  startDate DateTime
+  endDate   DateTime
+  winnerId  String?
+  createdAt DateTime   @default(now())
+
+  winner       User?          @relation("SeasonWinner", fields: [winnerId], references: [id])
+  seasonPoints SeasonPoints[]
+}
+
+model SeasonPoints {
+  id       String @id @default(cuid())
+  seasonId String
+  userId   String
+  points   Int    @default(0)
+  wins     Int    @default(0)
+
+  season Season @relation(fields: [seasonId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([seasonId, userId])
+}
+
+model FeedItem {
+  id         String   @id @default(cuid())
+  logEntryId String   @unique
+  userId     String
+  createdAt  DateTime @default(now())
+
+  logEntry  LogEntry   @relation(fields: [logEntryId], references: [id])
+  user      User       @relation(fields: [userId], references: [id])
+  reactions Reaction[]
+  comments  Comment[]
+}
+
+model Reaction {
+  id         String   @id @default(cuid())
+  feedItemId String
+  userId     String
+  emoji      String
+  createdAt  DateTime @default(now())
+
+  feedItem FeedItem @relation(fields: [feedItemId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+
+  @@unique([feedItemId, userId, emoji])
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  feedItemId String
+  userId     String
+  content    String
+  createdAt  DateTime @default(now())
+
+  feedItem FeedItem @relation(fields: [feedItemId], references: [id])
+  user     User     @relation(fields: [userId], references: [id])
+}
+
+model StakesTracker {
+  id         String   @id @default(cuid())
+  monthLabel String
+  wager      String
+  winnerId   String?
+  createdAt  DateTime @default(now())
+}
