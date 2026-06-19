@@ -21,6 +21,8 @@ interface Habit {
   unit: string | null;
   minValue: number | null;
   loggedToday: boolean;
+  logEntryId: string | null;
+  pointsEarnedToday: number;
   streak: number;
 }
 
@@ -32,8 +34,11 @@ interface Props {
 export default function LogClient({ habits, todayTotal }: Props) {
   const router = useRouter();
   const [, startTransition] = useTransition();
-  const [loggedSet, setLoggedSet] = useState<Set<string>>(
-    new Set<string>(habits.filter((h) => h.loggedToday).map((h) => h.id))
+  const [loggedMap, setLoggedMap] = useState<Map<string, string>>(
+    new Map(habits.filter((h) => h.loggedToday && h.logEntryId).map((h) => [h.id, h.logEntryId!]))
+  );
+  const [pointsByHabit, setPointsByHabit] = useState<Map<string, number>>(
+    new Map(habits.filter((h) => h.loggedToday).map((h) => [h.id, h.pointsEarnedToday]))
   );
   const [numericModal, setNumericModal] = useState<Habit | null>(null);
   const [numericValue, setNumericValue] = useState("");
@@ -52,12 +57,11 @@ export default function LogClient({ habits, todayTotal }: Props) {
       });
       const data = await res.json();
       if (!res.ok) {
-        if (res.status === 409) {
-          setFlash("Already logged today!");
-        }
+        if (res.status === 409) setFlash("Already logged today!");
         return;
       }
-      setLoggedSet((prev) => new Set<string>([...Array.from(prev), habitId]));
+      setLoggedMap((prev) => new Map(prev).set(habitId, data.logEntryId));
+      setPointsByHabit((prev) => new Map(prev).set(habitId, data.pointsEarned));
       setTodayPts((prev) => prev + data.pointsEarned);
       setFlash(`+${data.pointsEarned} pts${data.streak?.current > 1 ? ` 🔥 ${data.streak.current} day streak!` : ""}`);
       setTimeout(() => setFlash(null), 3000);
@@ -67,8 +71,34 @@ export default function LogClient({ habits, todayTotal }: Props) {
     }
   }
 
+  async function undoHabit(habitId: string) {
+    const logEntryId = loggedMap.get(habitId);
+    if (!logEntryId) return;
+    setLoading(habitId);
+    try {
+      const res = await fetch("/api/log", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logEntryId }),
+      });
+      if (!res.ok) return;
+      const earned = pointsByHabit.get(habitId) ?? 0;
+      setLoggedMap((prev) => {
+        const next = new Map(prev);
+        next.delete(habitId);
+        return next;
+      });
+      setTodayPts((prev) => prev - earned);
+      setFlash("Undone");
+      setTimeout(() => setFlash(null), 2000);
+      startTransition(() => router.refresh());
+    } finally {
+      setLoading(null);
+    }
+  }
+
   function handleHabitTap(habit: Habit) {
-    if (loggedSet.has(habit.id)) return;
+    if (loggedMap.has(habit.id)) return;
     if (habit.type === "NUMERIC") {
       setNumericModal(habit);
       setNumericValue("");
@@ -118,45 +148,58 @@ export default function LogClient({ habits, todayTotal }: Props) {
             </h3>
             <div className="space-y-2">
               {catHabits.map((habit) => {
-                const done = loggedSet.has(habit.id);
+                const done = loggedMap.has(habit.id);
                 const isLoading = loading === habit.id;
                 return (
-                  <button
+                  <div
                     key={habit.id}
-                    onClick={() => handleHabitTap(habit)}
-                    disabled={done || isLoading}
-                    className={`w-full flex items-center gap-3 p-4 rounded-xl border text-left transition active:scale-95 ${
+                    className={`w-full flex items-center gap-3 p-4 rounded-xl border transition ${
                       done
-                        ? "bg-green-500/10 border-green-500/30 opacity-70"
+                        ? "bg-green-500/10 border-green-500/30"
                         : "bg-white/5 border-white/10 hover:bg-white/10 hover:border-white/20"
                     }`}
                   >
-                    <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
-                      done ? "border-green-500 bg-green-500" : "border-white/30"
-                    }`}>
-                      {done && <span className="text-black text-xs font-black">✓</span>}
-                      {isLoading && <span className="text-white text-xs animate-spin">○</span>}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className={`font-medium text-sm ${done ? "line-through text-white/40" : ""}`}>
-                        {habit.title}
+                    <button
+                      onClick={() => handleHabitTap(habit)}
+                      disabled={done || isLoading}
+                      className="flex-1 flex items-center gap-3 text-left active:scale-95 transition disabled:active:scale-100"
+                    >
+                      <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                        done ? "border-green-500 bg-green-500" : "border-white/30"
+                      }`}>
+                        {done && <span className="text-black text-xs font-black">✓</span>}
+                        {isLoading && <span className="text-white text-xs animate-spin">○</span>}
                       </div>
-                      {habit.streak > 0 && !done && (
-                        <div className="text-xs text-orange-400 mt-0.5">🔥 {habit.streak} day streak</div>
-                      )}
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      <div className={`text-sm font-bold ${done ? "text-white/30" : "text-yellow-400"}`}>
-                        +{habit.points}
+                      <div className="flex-1 min-w-0">
+                        <div className={`font-medium text-sm ${done ? "line-through text-white/40" : ""}`}>
+                          {habit.title}
+                        </div>
+                        {habit.streak > 0 && !done && (
+                          <div className="text-xs text-orange-400 mt-0.5">🔥 {habit.streak} day streak</div>
+                        )}
                       </div>
-                      {habit.type === "NUMERIC" && (
-                        <div className="text-xs text-white/30">{habit.unit}</div>
-                      )}
-                      {habit.type === "MILESTONE" && (
-                        <div className="text-xs text-purple-400">milestone</div>
-                      )}
-                    </div>
-                  </button>
+                      <div className="text-right flex-shrink-0">
+                        <div className={`text-sm font-bold ${done ? "text-white/30" : "text-yellow-400"}`}>
+                          +{habit.points}
+                        </div>
+                        {habit.type === "NUMERIC" && (
+                          <div className="text-xs text-white/30">{habit.unit}</div>
+                        )}
+                        {habit.type === "MILESTONE" && (
+                          <div className="text-xs text-purple-400">milestone</div>
+                        )}
+                      </div>
+                    </button>
+                    {done && (
+                      <button
+                        onClick={() => undoHabit(habit.id)}
+                        disabled={isLoading}
+                        className="text-xs text-red-400/70 hover:text-red-400 px-2 py-1 rounded-lg hover:bg-red-400/10 transition flex-shrink-0"
+                      >
+                        Undo
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>

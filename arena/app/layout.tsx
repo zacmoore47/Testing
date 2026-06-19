@@ -4,6 +4,7 @@ import { SessionProvider } from "@/components/SessionProvider";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import Nav from "@/components/Nav";
+import NotificationScheduler from "@/components/NotificationScheduler";
 
 export const metadata: Metadata = {
   title: "The Arena",
@@ -17,6 +18,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
       <body className="min-h-screen bg-[#0f0f0f] text-white">
         <SessionProvider session={session}>
           {session && <Nav />}
+          {session && <NotificationScheduler />}
           <main className="max-w-2xl mx-auto px-4 pb-24 pt-4">{children}</main>
         </SessionProvider>
       </body>

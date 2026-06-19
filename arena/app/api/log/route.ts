@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { calculatePoints, isStreakAlive, startOfDay } from "@/lib/scoring";
+import { calculatePoints, isStreakAlive, startOfDay, recalculateStreak } from "@/lib/scoring";
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions);
@@ -72,5 +72,51 @@ export async function POST(req: NextRequest) {
     return { entry, streak };
   });
 
-  return NextResponse.json({ pointsEarned, streak: result.streak });
+  return NextResponse.json({
+    logEntryId: result.entry.id,
+    pointsEarned,
+    streak: result.streak,
+  });
+}
+
+// Undo a log entry — reverses points and recomputes the streak from history.
+export async function DELETE(req: NextRequest) {
+  const session = await getServerSession(authOptions);
+  if (!session?.user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const userId = (session.user as any).id as string;
+  const { logEntryId } = await req.json();
+  if (!logEntryId) return NextResponse.json({ error: "logEntryId required" }, { status: 400 });
+
+  const entry = await prisma.logEntry.findUnique({ where: { id: logEntryId } });
+  if (!entry || entry.userId !== userId) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  await prisma.$transaction(async (tx) => {
+    await tx.reaction.deleteMany({ where: { feedItem: { logEntryId: entry.id } } });
+    await tx.comment.deleteMany({ where: { feedItem: { logEntryId: entry.id } } });
+    await tx.feedItem.deleteMany({ where: { logEntryId: entry.id } });
+    await tx.logEntry.delete({ where: { id: entry.id } });
+
+    await tx.user.update({
+      where: { id: userId },
+      data: { totalPoints: { decrement: entry.pointsEarned } },
+    });
+
+    const now = new Date();
+    const activeSeasons = await tx.season.findMany({
+      where: { startDate: { lte: now }, endDate: { gt: now } },
+    });
+    for (const season of activeSeasons) {
+      await tx.seasonPoints.updateMany({
+        where: { seasonId: season.id, userId },
+        data: { points: { decrement: entry.pointsEarned } },
+      });
+    }
+
+    await recalculateStreak(tx as any, userId, entry.habitId);
+  });
+
+  return NextResponse.json({ ok: true });
 }

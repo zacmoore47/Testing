@@ -10,9 +10,14 @@ export default async function HabitsPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user) redirect("/login");
 
+  const userId = (session.user as any).id as string;
+
   const habits = await prisma.habit.findMany({
     orderBy: [{ category: "asc" }, { points: "desc" }],
   });
+
+  const reminders = await prisma.habitReminder.findMany({ where: { userId } });
+  const reminderMap = new Map(reminders.map((r) => [r.habitId, r]));
 
   return (
     <HabitsClient
@@ -28,6 +33,8 @@ export default async function HabitsPage() {
         maxPoints: h.maxPoints,
         description: h.description,
         isActive: h.isActive,
+        reminderEnabled: reminderMap.get(h.id)?.enabled ?? false,
+        reminderTime: reminderMap.get(h.id)?.time ?? "09:00",
       }))}
     />
   );

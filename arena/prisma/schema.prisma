@@ -24,6 +24,7 @@ model User {
   reactions    Reaction[]
   comments     Comment[]
   wonSeasons   Season[]       @relation("SeasonWinner")
+  reminders    HabitReminder[]
 }
 
 enum HabitCategory {
@@ -62,6 +63,20 @@ model Habit {
 
   logEntries LogEntry[]
   streaks    Streak[]
+  reminders  HabitReminder[]
+}
+
+model HabitReminder {
+  id      String  @id @default(cuid())
+  userId  String
+  habitId String
+  enabled Boolean @default(false)
+  time    String // "HH:mm" 24-hour, local to the user's device
+
+  user  User  @relation(fields: [userId], references: [id])
+  habit Habit @relation(fields: [habitId], references: [id])
+
+  @@unique([userId, habitId])
 }
 
 model LogEntry {

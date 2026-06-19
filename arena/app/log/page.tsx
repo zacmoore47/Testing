@@ -22,12 +22,13 @@ export default async function LogPage() {
 
   const todayLogs = await prisma.logEntry.findMany({
     where: { userId, date: today },
-    select: { habitId: true, pointsEarned: true },
+    select: { id: true, habitId: true, pointsEarned: true },
   });
 
   const streaks = await prisma.streak.findMany({ where: { userId } });
 
-  const loggedToday = new Set(todayLogs.map((l) => l.habitId));
+  const loggedTodayMap = new Map(todayLogs.map((l) => [l.habitId, l.id]));
+  const pointsEarnedMap = new Map(todayLogs.map((l) => [l.habitId, l.pointsEarned]));
   const streakMap = new Map(streaks.map((s) => [s.habitId, s.current]));
 
   const habitsData = habits.map((h) => ({
@@ -39,7 +40,9 @@ export default async function LogPage() {
     frequency: h.frequency as string,
     unit: h.unit,
     minValue: h.minValue,
-    loggedToday: loggedToday.has(h.id),
+    loggedToday: loggedTodayMap.has(h.id),
+    logEntryId: loggedTodayMap.get(h.id) ?? null,
+    pointsEarnedToday: pointsEarnedMap.get(h.id) ?? 0,
     streak: streakMap.get(h.id) ?? 0,
   }));
 

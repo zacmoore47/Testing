@@ -36,9 +36,11 @@ interface Habit {
   maxPoints: number | null;
   description: string | null;
   isActive: boolean;
+  reminderEnabled: boolean;
+  reminderTime: string;
 }
 
-const BLANK: Omit<Habit, "id" | "isActive"> = {
+const BLANK: Omit<Habit, "id" | "isActive" | "reminderEnabled" | "reminderTime"> = {
   title: "",
   category: "HEALTH",
   points: 10,
@@ -65,7 +67,7 @@ export default function HabitsClient({ initialHabits }: { initialHabits: Habit[]
 
   function openNew() {
     setIsNew(true);
-    setEditing({ ...BLANK, id: "", isActive: true });
+    setEditing({ ...BLANK, id: "", isActive: true, reminderEnabled: false, reminderTime: "09:00" });
   }
 
   function openEdit(habit: Habit) {
@@ -111,6 +113,15 @@ export default function HabitsClient({ initialHabits }: { initialHabits: Habit[]
     if (res.ok) {
       setHabits((prev) => prev.map((h) => h.id === data.habit.id ? data.habit : h));
     }
+  }
+
+  async function saveReminder(habit: Habit, enabled: boolean, time: string) {
+    setHabits((prev) => prev.map((h) => h.id === habit.id ? { ...h, reminderEnabled: enabled, reminderTime: time } : h));
+    await fetch("/api/reminders", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ habitId: habit.id, enabled, time }),
+    });
   }
 
   return (
@@ -163,6 +174,23 @@ export default function HabitsClient({ initialHabits }: { initialHabits: Habit[]
                   <div className="text-yellow-400 font-bold text-sm flex-shrink-0">
                     +{habit.points} pts
                   </div>
+                  <button
+                    onClick={() => saveReminder(habit, !habit.reminderEnabled, habit.reminderTime)}
+                    title={habit.reminderEnabled ? `Reminder at ${habit.reminderTime}` : "Set reminder"}
+                    className={`text-sm px-1.5 transition flex-shrink-0 ${
+                      habit.reminderEnabled ? "text-yellow-400" : "text-white/20 hover:text-white/50"
+                    }`}
+                  >
+                    🔔
+                  </button>
+                  {habit.reminderEnabled && (
+                    <input
+                      type="time"
+                      value={habit.reminderTime}
+                      onChange={(e) => saveReminder(habit, true, e.target.value)}
+                      className="bg-white/5 border border-white/10 rounded-lg px-1.5 py-1 text-xs text-white/70 focus:outline-none focus:border-yellow-400 flex-shrink-0"
+                    />
+                  )}
                   <button
                     onClick={() => openEdit(habit)}
                     className="text-white/30 hover:text-white/70 text-sm px-2 transition"
