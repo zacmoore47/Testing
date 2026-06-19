@@ -3,6 +3,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { StreamEvent } from "@/lib/types";
 
+const COST_ESTIMATE = { low: 0.25, high: 0.55 };
+
 const AGENT_COLORS: Record<string, string> = {
   Researcher: "text-cyan-400",
   "Bull Analyst": "text-emerald-400",
@@ -84,9 +86,12 @@ export default function Home() {
   const [verdict, setVerdict] = useState<VerdictData | null>(null);
   const [sessions, setSessions] = useState<SessionListItem[]>([]);
   const [error, setError] = useState("");
+  const [queue, setQueue] = useState<string[]>([]);
+  const [queueRunning, setQueueRunning] = useState(false);
   const msgIdRef = useRef(0);
   const streamRef = useRef<Map<string, string>>(new Map());
   const debateRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadSessions = useCallback(async () => {
     try {
@@ -125,9 +130,55 @@ export default function Home() {
     }
   };
 
+  const handleCsvUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string;
+      const tickers = text
+        .split(/[\n,]/)
+        .map((s) => s.trim().toUpperCase())
+        .filter((s) => /^[A-Z]{1,5}$/.test(s));
+      if (tickers.length > 0) {
+        setQueue(tickers);
+      }
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  };
+
+  const runQueue = useCallback(async () => {
+    if (queueRunning || queue.length === 0) return;
+    setQueueRunning(true);
+    for (const t of queue) {
+      setTicker(t);
+      await runSingleTicker(t);
+    }
+    setQueue([]);
+    setQueueRunning(false);
+  }, [queue, queueRunning]);
+
+  useEffect(() => {
+    if (queue.length > 0 && !queueRunning && !running) {
+      runQueue();
+    }
+  }, [queue, queueRunning, running, runQueue]);
+
   const handleSubmit = async () => {
-    const t = ticker.trim().toUpperCase();
-    if (!t || running) return;
+    const raw = ticker.trim().toUpperCase();
+    if (!raw || running) return;
+    const tickers = raw.split(",").map((s) => s.trim()).filter((s) => /^[A-Z]{1,5}$/.test(s));
+    if (tickers.length === 0) return;
+    if (tickers.length > 1) {
+      setQueue(tickers);
+      return;
+    }
+    await runSingleTicker(tickers[0]);
+  };
+
+  const runSingleTicker = async (t: string) => {
+    if (running) return;
     setRunning(true);
     setError("");
     setMessages([]);
@@ -286,8 +337,7 @@ export default function Home() {
               value={ticker}
               onChange={(e) => setTicker(e.target.value.toUpperCase())}
               onKeyDown={(e) => e.key === "Enter" && handleSubmit()}
-              placeholder="TICKER"
-              maxLength={5}
+              placeholder="AAPL,MSFT"
               className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-zinc-500 placeholder-zinc-600 uppercase"
               disabled={running}
             />
@@ -299,6 +349,31 @@ export default function Home() {
               {running ? "..." : "Go"}
             </button>
           </div>
+          <div className="flex items-center gap-2 mt-2">
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+              disabled={running}
+            >
+              Upload CSV watchlist
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".csv,.txt"
+              onChange={handleCsvUpload}
+              className="hidden"
+            />
+            <span className="text-xs text-zinc-600 ml-auto">
+              ~${COST_ESTIMATE.low}-${COST_ESTIMATE.high}/run
+            </span>
+          </div>
+          {queue.length > 0 && (
+            <div className="mt-2 p-2 bg-zinc-900 rounded text-xs">
+              <span className="text-zinc-500">Queue: </span>
+              <span className="text-zinc-300">{queue.join(", ")}</span>
+            </div>
+          )}
           {error && (
             <p className="text-red-400 text-xs mt-2">{error}</p>
           )}
