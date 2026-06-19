@@ -1,0 +1,1 @@
+export const SHARED_RULES = `Ground every factual claim in the provided Dossier or a tool result, with its source and date. If something isn't verifiable, say UNKNOWN — never guess a number. Be concise and specific. End your turn with one line: STANCE: <one sentence> | CONFIDENCE: <0-100>.`;
