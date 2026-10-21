@@ -1,0 +1,67 @@
+# aggregate-A configuration. Every tunable lives here; code comments document where defaults come from.
+
+paths:
+  raw_cache: data/raw          # parquet cache of every fetched source (survives source outages)
+  outputs: outputs
+
+sample:
+  output_start: "2000-01-01"   # first date written to outputs
+  history_start: "1990-01-01"  # burn-in for volatility models (HAR / GARCH need history before 2000)
+
+fetch:
+  timeout_seconds: 30
+  retries: 3
+  max_cache_age_hours: 20      # re-fetch a source if its cache is older than this
+
+fred_series:
+  rf_3m: DTB3                  # 3-Month Treasury Bill Secondary Market Rate, Discount Basis (daily, %)
+  t10: DGS10                   # 10-Year Treasury Constant Maturity (daily, %)
+  vix: VIXCLS                  # CBOE VIX close, redistributed by FRED (daily, index points)
+  expinf_1y: EXPINF1YR         # Cleveland Fed 1-year expected inflation (monthly, %)
+  hy_oas: BAMLH0A0HYM2         # ICE BofA US High Yield OAS (daily, %) — FRED keeps only ~3y since Apr 2026
+  baa10y: BAA10Y               # Moody's Baa yield minus 10y Treasury (daily, %)
+
+shiller:
+  # Publication lag, in months, applied before a monthly CAPE observation is treated as known.
+  # Shiller's file is updated irregularly; 1 month is our assumption (see README "Assumptions").
+  availability_lag_months: 1
+
+damodaran:
+  # Year-end implied ERP for year Y is treated as known from the first trading day of Y+1.
+  availability_lag_days: 5
+
+vol:
+  horizon_days: 22             # trading days matching VIX's 30 calendar days
+  trading_days_per_year: 252
+  rv_measure: gk_overnight     # gk_overnight | gk | close_to_close
+  min_train_days: 1000         # expanding window must have this many daily obs before first forecast
+  refit_every_days: 21         # refit HAR / GARCH coefficients every N trading days (forecasts still daily)
+
+estimators:
+  moments_window_days: 1260    # ~5y rolling window of 22-day returns for the Esscher-tilt (VRP) estimator
+  esscher_max_A: 60.0          # upper bracket for the root search; no root below this => NaN
+  credit_min_history_days: 756 # z-scores need >= 3y of history, else NaN
+
+sanity:
+  a_min: 1.0
+  a_max: 15.0
+
+disagreement:
+  change_window_days: 63
+  min_abs_log_change: 0.10     # an estimator "moves" only if |Δlog A| exceeds this
+  dispersion_quantile: 0.90
+
+crises:
+  fear:
+    - {name: "9/11", start: "2001-09-11", end: "2001-10-11"}
+    - {name: "2002 bear trough", start: "2002-07-01", end: "2002-10-31"}
+    - {name: "GFC", start: "2008-09-15", end: "2009-03-09"}
+    - {name: "Aug 2011 US downgrade", start: "2011-08-01", end: "2011-10-03"}
+    - {name: "Aug 2015 China deval", start: "2015-08-18", end: "2015-09-30"}
+    - {name: "Q4 2018 selloff", start: "2018-10-03", end: "2018-12-24"}
+    - {name: "COVID crash", start: "2020-02-20", end: "2020-04-30"}
+    - {name: "2022 bear", start: "2022-01-03", end: "2022-10-12"}
+  calm:
+    - {name: "2005-06 low vol", start: "2005-01-01", end: "2006-12-31"}
+    - {name: "2013-14 low vol", start: "2013-01-01", end: "2014-09-30"}
+    - {name: "2017 low vol", start: "2017-01-01", end: "2017-12-31"}

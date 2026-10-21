@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.egg-info/
+.env
+data/raw/
+data/cache/
+outputs/*
+!outputs/README.md
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
