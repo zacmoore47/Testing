@@ -19,9 +19,12 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+import streamlit.components.v1 as components
+
 import compare
 import holdings as hd
 import panic_detector as pdx
+import report as rp
 
 BASE = Path(__file__).resolve().parent
 CAND_DIR = BASE / "portfolios" / "candidates"
@@ -102,7 +105,7 @@ def bump(name: str) -> None:
 # ---------------------------------------------------------------------------------------
 
 st.sidebar.title("📈 Portfolio Lab")
-page = st.sidebar.radio("Page", ["Compare portfolios", "My portfolio"])
+page = st.sidebar.radio("Page", ["Compare portfolios", "My portfolio", "Daily report"])
 st.sidebar.divider()
 demo = st.sidebar.toggle("Demo mode (made-up prices)", value=False,
                          help="Uses synthetic prices instead of Yahoo Finance. Only for "
@@ -397,7 +400,45 @@ def show_stress(res: dict) -> None:
         st.image(str(res["crises_png"]), width="stretch")
 
 
+# ---------------------------------------------------------------------------------------
+# Page: Daily report
+# ---------------------------------------------------------------------------------------
+
+
+def page_report() -> None:
+    st.title("Daily report")
+    st.write("One page with your money, your mix, the market regime, diversification health "
+             "and anything that changed since the last report.")
+    MY_DIR.mkdir(parents=True, exist_ok=True)
+    files = sorted(p for p in MY_DIR.glob("*.csv") if not p.stem.endswith("_history"))
+    if not files:
+        st.info("Save your holdings on the **My portfolio** page first.")
+        return
+    which = st.selectbox("Portfolio", [p.stem for p in files])
+    path = MY_DIR / f"{which}.csv"
+    latest = BASE / "outputs" / "reports" / f"{which}_latest.html"
+    if st.button("📰 Generate today's report", type="primary"):
+        with st.spinner("Fetching prices and building the report (about 20-40 s)..."):
+            try:
+                st.session_state[f"report_{which}"] = rp.run_report(make_cfg(), path,
+                                                                    synthetic=demo)
+            except Exception as exc:
+                st.error(f"Report failed: {exc}")
+    res = st.session_state.get(f"report_{which}")
+    page_html = res["html"] if res else (latest.read_text() if latest.exists() else None)
+    if res and res["synthetic"]:
+        st.warning("This report uses MADE-UP prices (demo mode).")
+    if page_html:
+        if not res:
+            st.caption("Showing the most recent saved report. Click the button for today's.")
+        components.html(page_html, height=2600, scrolling=True)
+        st.caption(f"Saved copies are in {latest.parent.relative_to(BASE)}/ "
+                   "(open the .html files in any browser).")
+
+
 if page == "Compare portfolios":
     page_compare()
-else:
+elif page == "My portfolio":
     page_my_portfolio()
+else:
+    page_report()

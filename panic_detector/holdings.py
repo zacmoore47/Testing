@@ -61,7 +61,7 @@ def save_holdings(df: pd.DataFrame, path: Path) -> None:
 def latest_prices(tickers: list[str], cfg: pdx.Config, synthetic: bool = False) -> pd.DataFrame:
     """Daily closes for roughly the last two weeks (always re-downloaded, never cached stale)."""
     if synthetic:
-        syn = pdx.Config(universe={"H": tickers}, start=str(date.today() - timedelta(days=400)),
+        syn = pdx.Config(universe={"H": tickers}, start="2019-01-01",  # same as report history
                          seed=cfg.seed, market_ticker=cfg.market_ticker)
         prices, _ = pdx.generate_synthetic_prices(syn)
         return prices[tickers].iloc[-10:]
@@ -110,7 +110,9 @@ def value_holdings(df: pd.DataFrame, cfg: pdx.Config,
     tsum = table["target_weight"].sum()
     table["target_%"] = 100 * table["target_weight"] / tsum if tsum else float("nan")
     table["drift_pts"] = table["actual_%"] - table["target_%"]
-    table["rebalance_flag"] = table["drift_pts"].abs() > DRIFT_BAND
+    # Cash with no target (0%) is treated as a buffer, not as part of the target mix.
+    cash_buffer = (table["ticker"] == CASH) & (table["target_weight"] == 0)
+    table["rebalance_flag"] = (table["drift_pts"].abs() > DRIFT_BAND) & ~cash_buffer
     table = table.drop(columns="target_weight")
 
     invested = table["invested_usd"].sum()

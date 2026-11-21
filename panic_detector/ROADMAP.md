@@ -112,7 +112,7 @@ volatility, not correlation.
 - [x] Polish: overlapping end labels on the growth chart; long crisis labels on the heatmap
 - [~] **S2. Web app (built, awaiting first real run):** `streamlit run app.py`; edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally
-- [ ] **S3. Daily report:** HTML page with value, daily and total P&L, actual vs target mix
+- [~] **S3. Daily report (built, awaiting first real run):** `--report portfolios/my/<file>.csv` or the app's Daily report page; HTML page with value, daily and total P&L, actual vs target mix
       and rebalance flags, market regime, diversification health, crisis exposure, alerts
       only on change; daily value history
 - [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification

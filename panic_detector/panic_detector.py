@@ -28,6 +28,8 @@ Usage:
     python panic_detector.py --universe etfs      # 9 sector ETFs since 1999 (survivorship-free)
     python panic_detector.py --portfolio example_portfolio.csv   # portfolio stress test
     python panic_detector.py --compare portfolios/candidates     # compare candidate portfolios
+    python panic_detector.py --report portfolios/my/my_portfolio.csv --open   # daily report
+    streamlit run app.py                                         # the Portfolio Lab web app
     python panic_detector.py --help
 
 Outputs (./outputs/ for stocks, ./outputs/etfs/ for --universe etfs):
@@ -1520,6 +1522,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="history needed before the panic flag can fire (default 252)")
     p.add_argument("--start", default=None, help="start date (default 2017-01-01 stocks, 1999-01-01 etfs)")
     p.add_argument("--end", default=None, help="end date (default today)")
+    p.add_argument("--report", type=Path, default=None,
+                   help="holdings CSV in portfolios/my/: build today's daily report")
+    p.add_argument("--open", action="store_true", help="--report: open the report in the browser")
     p.add_argument("--compare", type=Path, nargs="+", default=None,
                    help="folder(s) or CSV files of candidate portfolios to compare side by side")
     p.add_argument("--portfolio", type=Path, default=None,
@@ -1573,6 +1578,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.self_test:
             self_test(cfg)
+        elif args.report:
+            from report import run_report  # local module, imported lazily
+            run_report(cfg, args.report, synthetic=args.synthetic, open_browser=args.open)
         elif args.compare:
             from compare import run_compare  # local module, imported lazily
             run_compare(cfg, args.compare, synthetic=args.synthetic)
