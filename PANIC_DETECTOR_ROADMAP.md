@@ -51,11 +51,11 @@ volatility, not correlation.
       about 0.8 in 2020). Lesson: the hedge depends on the crisis type (deflationary → bonds, inflationary → energy).
       Limitation found: daily-return correlation misses shared downward drift (TLT ≈ 0 corr
       in 2022 but fell ~20% alongside stocks)
-- [ ] 3a+ Historical replay: actual portfolio and per-holding return, max drawdown, worst
+- [x] 3a+ Historical replay (built; awaiting real-data run): actual portfolio and per-holding return, max drawdown, worst
       day and worst month inside each crisis window (captures drift that correlation misses)
-- [ ] 3a+ Multiple crisis scenarios in one report (COVID 2020, 2022 inflation shock, 2025 tariffs):
+- [x] 3a+ Multiple crisis scenarios in one report (2008, Q4 2018, COVID, 2022, 2025; skipped if outside history) (COVID 2020, 2022 inflation shock, 2025 tariffs):
       the crisis type matters (bonds hedged in 2020 but fell with stocks in 2022)
-- [ ] 3a+ Historical (non-normal) bad-day/bad-month estimates from the crisis window, since
+- [x] 3a+ Historical (non-normal) worst day / worst 21 days / max drawdown per crisis from the crisis window, since
       normal approximations understate crash tails
 - [ ] **3b. (Deprioritised) Honest backtest of a volatility-based de-risking rule** vs buy-and-hold: trading costs included,
       out-of-sample, explicit overfitting check

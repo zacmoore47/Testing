@@ -932,22 +932,12 @@ def _risk_split(w: np.ndarray, vol: np.ndarray, corr: np.ndarray) -> tuple[np.nd
     return w * cw / var, cw / (vol * math.sqrt(var))
 
 
-def portfolio_stress(prices: pd.DataFrame, weights: pd.Series, cfg: Config,
-                     crisis_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
-    """Diversification health and crisis stress test for a portfolio.
+def prepare_portfolio_prices(prices: pd.DataFrame, weights: pd.Series,
+                             cfg: Config) -> tuple[pd.DataFrame, pd.Series]:
+    """Align holdings + market prices on their common history.
 
-    Today = the most recent ``cfg.window`` trading days. Crisis = the window with the
-    highest average correlation among the holdings in their common history (or the window
-    ending nearest ``crisis_date``). Scenarios keep today's weights:
-      1. Today: today's volatilities and correlations
-      2. Crisis correlations: today's volatilities, crisis correlations (diversification fails)
-      3. Full crisis repeat: crisis volatilities and correlations
-      4. Worst case: every correlation = 1 (no diversification at all)
-    Effective independent bets = diversification ratio squared (Choueifaty & Coignard):
-    N for N equal-risk uncorrelated holdings, 1 when everything moves together.
-
-    Returns:
-        (scenario table, per-holding table, info dict with dates and summary numbers)
+    Holdings with no data are dropped (weights rescaled, loudly logged). The history starts
+    when the most recently listed holding starts, so every holding is present every day.
     """
     tickers = list(weights.index)
     px = prices[[t for t in tickers if t in prices.columns] + [cfg.market_ticker]]
@@ -966,7 +956,29 @@ def portfolio_stress(prices: pd.DataFrame, weights: pd.Series, cfg: Config,
     if not late.empty:
         log.warning("Common history starts %s because of late listings: %s", common_start.date(),
                     ", ".join(f"{t} ({d.date()})" for t, d in late.items()))
-    px = px.loc[common_start:].ffill(limit=cfg.ffill_limit).dropna()
+    return px.loc[common_start:].ffill(limit=cfg.ffill_limit).dropna(), weights
+
+
+def portfolio_stress(px: pd.DataFrame, weights: pd.Series, cfg: Config,
+                     crisis_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Diversification health and crisis stress test for a portfolio.
+
+    Today = the most recent ``cfg.window`` trading days. Crisis = the window with the
+    highest average correlation among the holdings in their common history (or the window
+    ending nearest ``crisis_date``). Scenarios keep today's weights:
+      1. Today: today's volatilities and correlations
+      2. Crisis correlations: today's volatilities, crisis correlations (diversification fails)
+      3. Full crisis repeat: crisis volatilities and correlations
+      4. Worst case: every correlation = 1 (no diversification at all)
+    Effective independent bets = diversification ratio squared (Choueifaty & Coignard):
+    N for N equal-risk uncorrelated holdings, 1 when everything moves together.
+
+    Expects prices already aligned by ``prepare_portfolio_prices``.
+
+    Returns:
+        (scenario table, per-holding table, info dict with dates and summary numbers)
+    """
+    tickers = list(weights.index)
     rets = np.log(px).diff().iloc[1:]
     if len(rets) < 2 * cfg.window:
         log.warning("Only %d days of common history: the crisis scenario may not be a real crisis",
@@ -1026,6 +1038,159 @@ def portfolio_stress(prices: pd.DataFrame, weights: pd.Series, cfg: Config,
     return scen, hold, info
 
 
+# Named crises for the historical replay: (start, end) = market peak to trough, roughly.
+# Crises outside the holdings' common history are skipped automatically.
+CRISES: dict[str, tuple[str, str]] = {
+    "2008 financial crisis": ("2007-10-09", "2009-03-09"),
+    "2018 Q4 sell-off": ("2018-09-20", "2018-12-24"),
+    "COVID crash 2020": ("2020-02-19", "2020-03-23"),
+    "2022 inflation bear": ("2022-01-03", "2022-10-12"),
+    "2025 tariff shock": ("2025-02-19", "2025-04-08"),
+}
+
+
+def crisis_replay(px: pd.DataFrame, weights: pd.Series,
+                  cfg: Config) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Replay today's portfolio through each named crisis, using actual prices.
+
+    Buy-and-hold from the crisis start (no rebalancing). Unlike correlation, this captures
+    holdings that drift down together even when their daily moves look unrelated (e.g.
+    stocks and bonds in 2022). For each crisis it reports portfolio and market return, max
+    drawdown, worst day, worst 21-day stretch, and the correlation-based diversification
+    (independent bets, and volatility with today's vols but the correlations of the
+    ``cfg.window`` days ending at the crisis trough).
+
+    Returns:
+        (one row per crisis, per-holding returns with crises as columns)
+    """
+    tickers = list(weights.index)
+    w = weights.to_numpy()
+    rets = np.log(px[tickers]).diff().iloc[1:]
+    now = rets.iloc[-cfg.window:]
+    vol_now = now.std().to_numpy() * math.sqrt(252)
+    rows, per_holding = [], {}
+    for name, (start, end) in CRISES.items():
+        s_ts, e_ts = pd.Timestamp(start), pd.Timestamp(end)
+        if s_ts < px.index[0] or e_ts > px.index[-1]:
+            log.info("  Crisis replay: skipping %s (outside the holdings' common history from %s)",
+                     name, px.index[0].date())
+            continue
+        win = px.loc[s_ts:e_ts]
+        if len(win) < 5:
+            continue
+        rel = win / win.iloc[0]
+        value = rel[tickers] @ w  # buy-and-hold value, starts at 1
+        mkt = rel[cfg.market_ticker]
+        month = value.pct_change(21).min() if len(value) > 21 else value.iloc[-1] - 1.0
+        hold_ret = rel[tickers].iloc[-1] - 1.0
+        per_holding[name] = hold_ret
+
+        end_pos = rets.index.get_indexer([win.index[-1]])[0]
+        c = rets.iloc[max(0, end_pos - cfg.window + 1): end_pos + 1].corr().to_numpy()
+        pv = _port_vol(w, vol_now, c)
+        rows.append({
+            "crisis": name,
+            "start": win.index[0].date(),
+            "end": win.index[-1].date(),
+            "days": len(win) - 1,
+            "portfolio_return_%": 100 * (value.iloc[-1] - 1.0),
+            f"{cfg.market_ticker}_return_%": 100 * (mkt.iloc[-1] - 1.0),
+            "max_drawdown_%": 100 * (value / value.cummax() - 1.0).min(),
+            "worst_day_%": 100 * value.pct_change().min(),
+            "worst_21d_%": 100 * month,
+            "independent_bets": (float(np.abs(w) @ vol_now) / pv) ** 2,
+            "vol_today_crisis_corr_%": 100 * pv,
+            "best_holding": hold_ret.idxmax(),
+            "best_holding_return_%": 100 * hold_ret.max(),
+            "worst_holding": hold_ret.idxmin(),
+            "worst_holding_return_%": 100 * hold_ret.min(),
+        })
+    summary = pd.DataFrame(rows)
+    holdings = pd.DataFrame(per_holding).mul(100)
+    holdings.index.name = "ticker"
+    if not holdings.empty:
+        holdings.insert(0, "weight_%", 100 * weights.reindex(holdings.index))
+    return summary, holdings
+
+
+def log_crisis_replay(summary: pd.DataFrame, cfg: Config) -> None:
+    """Print the crisis replay as a compact table."""
+    if summary.empty:
+        log.info("CRISIS REPLAY: no named crisis falls inside the holdings' common history")
+        return
+    mk = f"{cfg.market_ticker}_return_%"
+    lines = [f"  {'Crisis':<22} {'Dates':<23} {'Portf.':>7} {cfg.market_ticker:>7} {'MaxDD':>7} "
+             f"{'WorstDay':>8} {'Worst21d':>8} {'Bets':>5}  Best / worst holding"]
+    for _, r in summary.iterrows():
+        lines.append(
+            f"  {r['crisis']:<22} {str(r['start'])}→{str(r['end'])} "
+            f"{r['portfolio_return_%']:6.1f}% {r[mk]:6.1f}% {r['max_drawdown_%']:6.1f}% "
+            f"{r['worst_day_%']:7.1f}% {r['worst_21d_%']:7.1f}% {r['independent_bets']:5.1f}  "
+            f"{r['best_holding']} {r['best_holding_return_%']:+.0f}% / "
+            f"{r['worst_holding']} {r['worst_holding_return_%']:+.0f}%")
+    log.info("CRISIS REPLAY (actual prices, today's weights, buy-and-hold from each crisis start):\n%s",
+             "\n".join(lines))
+    log.info("  These are real historical losses, so unlike the bad-day/month estimates above they "
+             "include fat tails and shared drift.")
+
+
+def plot_crisis_replay(summary: pd.DataFrame, holdings: pd.DataFrame, cfg: Config,
+                       path: Path) -> None:
+    """Left: portfolio vs market return per crisis. Right: each holding's return per crisis."""
+    if summary.empty:
+        return
+    from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+
+    crises = list(summary["crisis"])
+    hold = holdings.drop(columns="weight_%").reindex(columns=crises)
+    hold = hold.loc[hold.mean(axis=1).sort_values(ascending=False).index]
+    n_h, n_c = hold.shape
+    fig, (ax_b, ax_h) = plt.subplots(1, 2, figsize=(7 + 2.2 * n_c, max(5.0, 0.42 * n_h + 2.2)),
+                                     gridspec_kw={"width_ratios": [1, 1.25]})
+    _style_axis(ax_b)
+    x = np.arange(n_c)
+    mk = f"{cfg.market_ticker}_return_%"
+    ax_b.bar(x - 0.2, summary["portfolio_return_%"], width=0.38, color="#2a78d6", label="Your portfolio")
+    ax_b.bar(x + 0.2, summary[mk], width=0.38, color="#9a9a9a", label=cfg.market_ticker)
+    ax_b.scatter(x - 0.2, summary["max_drawdown_%"], marker="_", s=400, color=INK, zorder=3,
+                 label="Portfolio max drawdown")
+    for xi, v in zip(x, summary["portfolio_return_%"]):
+        ax_b.text(xi - 0.2, v, f"{v:.0f}%", ha="center", va="top" if v < 0 else "bottom",
+                  fontsize=8, color=INK)
+    ax_b.axhline(0, color=INK_MUTED, linewidth=0.8)
+    ax_b.set_xticks(x)
+    ax_b.set_xticklabels([c.replace(" ", "\n", 1) for c in crises], fontsize=9)
+    ax_b.grid(axis="x", visible=False)
+    ax_b.set_ylabel("Return from crisis start to trough (%)", color=INK)
+    ax_b.set_title("What today's portfolio would have done", fontsize=11, color=INK, loc="left")
+    ax_b.legend(frameon=False, fontsize=9, loc="lower left")
+
+    # Diverging map: red = loss, grey midpoint = flat, blue = gain.
+    cmap = LinearSegmentedColormap.from_list("div", ["#e34948", "#f0efec", "#2a78d6"])
+    vals = hold.to_numpy(dtype=float)
+    lim = np.nanmax(np.abs(vals)) or 1.0
+    ax_h.imshow(vals, cmap=cmap, norm=TwoSlopeNorm(vmin=-lim, vcenter=0, vmax=lim), aspect="auto")
+    for i in range(n_h):
+        for j in range(n_c):
+            v = vals[i, j]
+            if np.isfinite(v):
+                ax_h.text(j, i, f"{v:+.0f}%", ha="center", va="center", fontsize=8, color=INK)
+    ax_h.set_xticks(range(n_c))
+    ax_h.set_xticklabels([c.replace(" ", "\n", 1) for c in crises], fontsize=9)
+    ax_h.set_yticks(range(n_h))
+    ax_h.set_yticklabels(hold.index, fontsize=9)
+    ax_h.tick_params(length=0, colors=INK_MUTED)
+    for side in ax_h.spines.values():
+        side.set_visible(False)
+    ax_h.set_title("Each holding's return in each crisis (blue = protected you)", fontsize=11,
+                   color=INK, loc="left")
+    fig.suptitle("Crisis replay: today's weights, actual historical prices", fontsize=13, color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    log.info("Saved %s", path)
+
+
 def log_portfolio_report(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg: Config) -> None:
     """Plain-English summary of the portfolio stress test."""
     t = scen.set_index("scenario")
@@ -1052,7 +1217,8 @@ def log_portfolio_report(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg
     log.info("  Best diversifiers today (lowest correlation to the portfolio): %s", "; ".join(
         f"{tk} {r['corr_to_portfolio_today']:+.2f} (crisis {r['corr_to_portfolio_crisis']:+.2f})"
         for tk, r in div.iterrows()))
-    log.info("  Note: bad-day/month figures assume normal returns and understate real crash tails.")
+    log.info("  Note: bad-day/month figures assume normal returns and understate real crash "
+             "tails; see the crisis replay below for actual historical losses.")
 
 
 def plot_portfolio(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg: Config, path: Path) -> None:
@@ -1138,12 +1304,20 @@ def run_portfolio(cfg: Config, portfolio_path: Path, synthetic: bool,
         syn_cfg = Config(universe={"Portfolio": tickers}, start=cfg.start, end=cfg.end,
                          seed=cfg.seed, market_ticker=cfg.market_ticker)
         prices, _ = generate_synthetic_prices(syn_cfg)
-    scen, hold, info = portfolio_stress(prices, weights, cfg, crisis_date)
+    px, weights = prepare_portfolio_prices(prices, weights, cfg)
+    scen, hold, info = portfolio_stress(px, weights, cfg, crisis_date)
+    replay, replay_hold = crisis_replay(px, weights, cfg)
     scen.to_csv(outdir / "portfolio_scenarios.csv", index=False, float_format="%.3f")
     hold.to_csv(outdir / "portfolio_holdings.csv", float_format="%.3f")
     log.info("Saved %s and %s", outdir / "portfolio_scenarios.csv", outdir / "portfolio_holdings.csv")
     log_portfolio_report(scen, hold, info, cfg)
     plot_portfolio(scen, hold, info, cfg, outdir / "portfolio_report.png")
+    replay.to_csv(outdir / "portfolio_crises.csv", index=False, float_format="%.3f")
+    replay_hold.to_csv(outdir / "portfolio_crisis_holdings.csv", float_format="%.3f")
+    log.info("Saved %s and %s", outdir / "portfolio_crises.csv",
+             outdir / "portfolio_crisis_holdings.csv")
+    log_crisis_replay(replay, cfg)
+    plot_crisis_replay(replay, replay_hold, cfg, outdir / "portfolio_crises.png")
     return scen, hold
 
 
