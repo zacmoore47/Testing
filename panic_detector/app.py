@@ -43,11 +43,15 @@ CSS = """
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 :root { --ink:#1a1a1a; --muted:#6b6b6b; --line:#e3e3df; --accent:#2a78d6; --pos:#0f7b3f; --neg:#c62f2e; }
-html, body, .stApp, .stMarkdown, p, label, input, textarea, button, li { font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif; }
+html, body, .stApp, .stApp p, .stApp label, .stApp li, .stApp input, .stApp textarea, .stApp button,
+.stApp h1, .stApp h2, .stApp h3, .stApp [data-testid="stMarkdownContainer"], .stApp [data-baseweb],
+.stApp span:not([data-testid="stIconMaterial"]):not([class*="material"]) {
+  font-family: 'IBM Plex Mono', SFMono-Regular, Menlo, Consolas, monospace; }
+.stApp { font-size: 0.92rem; }
 .stApp { background:#fbfbfa; }
 header[data-testid="stHeader"] { background:transparent; height:0; }
 .block-container { padding-top:2.0rem; padding-bottom:3rem; max-width:1320px; }
-h1 { font-size:1.55rem !important; font-weight:600 !important; letter-spacing:-0.01em; margin:0 !important; padding:0 !important; }
+h1 { font-size:1.45rem !important; font-weight:500 !important; letter-spacing:0; margin:0 !important; padding:0 !important; }
 h2, h3 { font-weight:600 !important; letter-spacing:-0.01em; }
 section[data-testid="stSidebar"] { background:#f3f3f1; border-right:1px solid var(--line); }
 section[data-testid="stSidebar"] .block-container { padding-top:1.2rem; }
@@ -175,7 +179,7 @@ with st.sidebar:
     page = st.radio("Page", ["Compare", "Portfolio", "Daily report"],
                     label_visibility="collapsed")
     st.markdown("<div class='section'>Data</div>", unsafe_allow_html=True)
-    demo = st.toggle("Synthetic prices (demo)", value=False,
+    demo = st.toggle("Demo data", value=False,
                      help="Uses made-up prices instead of Yahoo Finance, for trying the app "
                           "offline. All numbers are then meaningless.")
     if demo:
@@ -286,14 +290,13 @@ def show_compare(res: dict) -> None:
     with t1:
         st.dataframe(pd.DataFrame({
             "Allocation": s["portfolio"], "CAGR": s["growth_per_year_%"], "Vol": s["volatility_%"],
-            "Return / vol": s["return_per_risk"], "Max DD": s["max_drawdown_%"],
-            "Peak → recovery": s["peak_to_recovery"], "Worst 12m": s["worst_12m_%"],
-            "$10k →": s["10k_becomes_$"], "Bets now": s["bets_today"],
-            "Bets (COVID)": s["bets_in_covid"], "Top risk": s["biggest_risk"],
+            "Ret/vol": s["return_per_risk"], "Max DD": s["max_drawdown_%"],
+            "Recovery": s["peak_to_recovery"].str.replace("not yet recovered", "not yet"),
+            "Worst 12m": s["worst_12m_%"], "$10k →": s["10k_becomes_$"],
+            "Bets": s["bets_today"], "Bets·COVID": s["bets_in_covid"], "Top risk": s["biggest_risk"],
         }), hide_index=True, width="stretch", column_config={
-            "CAGR": PCT, "Vol": PCT, "Return / vol": st.column_config.NumberColumn(format="%.2f"),
-            "Max DD": PCT, "Worst 12m": PCT, "$10k →": USD, "Bets now": NUM1,
-            "Bets (COVID)": NUM1})
+            "CAGR": PCT, "Vol": PCT, "Ret/vol": st.column_config.NumberColumn(format="%.2f"),
+            "Max DD": PCT, "Worst 12m": PCT, "$10k →": USD, "Bets": NUM1, "Bets·COVID": NUM1})
         a, b = st.columns([1.5, 1], gap="large")
         with a:
             st.markdown("<div class='meta'>GROWTH OF $10,000 · LOG SCALE</div>", unsafe_allow_html=True)

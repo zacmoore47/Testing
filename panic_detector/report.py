@@ -236,12 +236,12 @@ CSS = """
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
 :root { --ink:#1a1a1a; --muted:#6b6b6b; --bg:#fbfbfa; --card:#ffffff; --line:#e3e3df;
         --pos:#0f7b3f; --neg:#c62f2e; --warn:#a86b00; --accent:#2a78d6; }
-body { font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif; color: var(--ink);
+body { font-family: 'IBM Plex Mono', SFMono-Regular, Menlo, monospace; color: var(--ink); font-size: 14px;
        background: var(--bg); max-width: 920px; margin: 0 auto; padding: 28px 16px 48px;
        line-height: 1.45; }
 .eyebrow, .k, th, .note, .sub, h2 { font-family: 'IBM Plex Mono', monospace; }
 .eyebrow { text-transform: uppercase; letter-spacing: .14em; font-size: 11px; color: var(--accent); }
-h1 { font-size: 24px; font-weight: 600; margin: 4px 0 2px; letter-spacing: -0.01em; }
+h1 { font-size: 22px; font-weight: 500; margin: 4px 0 2px; letter-spacing: -0.01em; }
 .sub { color: var(--muted); font-size: 12px; margin: 0 0 18px; letter-spacing: .03em; }
 h2 { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .12em;
      color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 6px; margin: 30px 0 12px; }

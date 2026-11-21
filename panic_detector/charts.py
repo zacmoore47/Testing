@@ -11,7 +11,7 @@ import altair as alt
 import numpy as np
 import pandas as pd
 
-SANS = "IBM Plex Sans, Helvetica Neue, Helvetica, Arial, sans-serif"
+SANS = "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"  # one typeface throughout
 MONO = "IBM Plex Mono, SFMono-Regular, Menlo, Consolas, monospace"
 INK = "#1a1a1a"
 MUTED = "#6b6b6b"

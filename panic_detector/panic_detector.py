@@ -52,8 +52,8 @@ import matplotlib
 
 matplotlib.use("Agg")  # headless backend: we only save files
 matplotlib.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["IBM Plex Sans", "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
+    "font.family": "monospace",
+    "font.monospace": ["IBM Plex Mono", "Menlo", "SF Mono", "Consolas", "DejaVu Sans Mono"],
     "axes.titleweight": "regular",
 })
 
