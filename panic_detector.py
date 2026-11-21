@@ -23,7 +23,7 @@ Usage:
     python panic_detector.py --synthetic          # synthetic one-factor data + self-test
     python panic_detector.py --self-test          # run the self-test only
     python panic_detector.py --mst --window 120   # MST network, 120-day window
-    python panic_detector.py --start 2017-01-01   # longer history = panic flag live by 2020
+    python panic_detector.py --start 2019-01-01   # shorter history (panic flag misses Mar 2020)
     python panic_detector.py --z-mode expanding   # original all-history panic baseline
     python panic_detector.py --help
 
@@ -118,7 +118,7 @@ class Config:
 
     universe: dict[str, list[str]] = field(default_factory=lambda: dict(UNIVERSE))
     market_ticker: str = "SPY"
-    start: str = "2019-01-01"
+    start: str = "2017-01-01"  # 2 years before COVID so the panic flag is warmed up
     end: str | None = None  # None = today
     window: int = 90  # rolling window length in trading days (T)
     step: int = 5  # step between window end dates, trading days
@@ -556,8 +556,12 @@ def _frame_title(d: pd.Timestamp, row: pd.Series, n: int, label: str = "") -> st
 
 
 def plot_snapshots(metrics: pd.DataFrame, corr: np.ndarray, layouts: list[dict[str, np.ndarray]],
-                   tickers: list[str], cfg: Config, lim: float, path: Path) -> None:
-    """Four side-by-side network snapshots: calmest, most panicked, and two event dates."""
+                   tickers: list[str], cfg: Config, path: Path) -> None:
+    """Four side-by-side network snapshots: calmest, most panicked, and two event dates.
+
+    A date that lands on a window already shown is replaced by the latest window. The four
+    panels share one axis scale (so they stay comparable), fitted to these four frames.
+    """
     idx = metrics.index
     picks: list[tuple[str, int]] = [
         ("Calmest window", int(np.argmin(metrics["avg_corr"].to_numpy()))),
@@ -569,7 +573,14 @@ def plot_snapshots(metrics: pd.DataFrame, corr: np.ndarray, layouts: list[dict[s
         if abs((idx[i] - ts).days) > 10:
             log.warning("Snapshot date %s outside the data; using nearest window %s", d,
                         idx[i].date())
+        if i in {j for _, j in picks}:
+            latest = len(idx) - 1
+            if latest not in {j for _, j in picks}:
+                log.info("Snapshot near %s duplicates another panel; showing latest window", d)
+                picks.append(("Latest window", latest))
+                continue
         picks.append((f"Near {d}", i))
+    lim = 1.12 * max(np.abs(np.array(list(layouts[i].values()))).max() for _, i in picks)
 
     fig, axes = plt.subplots(1, 4, figsize=(22, 6.4))
     sector_of = cfg.sector_of
@@ -741,7 +752,7 @@ def run(cfg: Config, synthetic: bool) -> pd.DataFrame:
     lim = 1.08 * max(np.abs(np.array(list(p.values()))).max() for p in layouts)
 
     plot_tracking(metrics, market, cfg, cfg.outdir / "tracking.png")
-    plot_snapshots(metrics, corr, layouts, tickers, cfg, lim, cfg.outdir / "snapshots.png")
+    plot_snapshots(metrics, corr, layouts, tickers, cfg, cfg.outdir / "snapshots.png")
     if cfg.make_gif:
         make_animation(metrics, corr, layouts, tickers, cfg, lim, cfg.outdir / "network.gif")
     return metrics
@@ -768,7 +779,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="rolling baseline length in trading days (default 504 = ~2 years)")
     p.add_argument("--z-min-days", type=int, default=252,
                    help="history needed before the panic flag can fire (default 252)")
-    p.add_argument("--start", default="2019-01-01", help="start date (default 2019-01-01)")
+    p.add_argument("--start", default="2017-01-01", help="start date (default 2017-01-01)")
     p.add_argument("--end", default=None, help="end date (default today)")
     p.add_argument("--synthetic", action="store_true", help="use synthetic one-factor data and run the self-test")
     p.add_argument("--self-test", action="store_true", help="run the synthetic self-test only and exit")
