@@ -184,6 +184,11 @@ with st.sidebar:
                           "offline. All numbers are then meaningless.")
     if demo:
         flag("Synthetic prices: results are illustrative only.", negative=True)
+    if st.button("Refresh prices", width="stretch",
+                 help="Saved prices refresh automatically when older than 12 hours. Use this "
+                      "to force a fresh download now."):
+        n = pdx.clear_price_cache(BASE / "data")
+        st.toast(f"Cleared {n} saved price files; the next run downloads fresh prices.")
     st.markdown("<div class='note'>Runs locally. Based on historical prices; describes "
                 "risk and trade-offs, does not predict returns. Not financial advice.</div>",
                 unsafe_allow_html=True)
@@ -278,7 +283,8 @@ def show_compare(res: dict) -> None:
     section("Results")
     if res["synthetic"]:
         flag("Synthetic prices: results are illustrative only.", negative=True)
-    st.markdown(f"<div class='meta'>WINDOW {res['start']:%Y-%m-%d} → {res['end']:%Y-%m-%d} · "
+    st.markdown(f"<div class='meta'>PRICES AS OF {res['end']:%Y-%m-%d} · "
+                f"WINDOW {res['start']:%Y-%m-%d} → {res['end']:%Y-%m-%d} · "
                 f"{len(names)} ALLOCATIONS · DAILY REBALANCED · GROSS OF FEES AND TAXES</div>",
                 unsafe_allow_html=True)
     if res["proxy_lines"]:
@@ -423,6 +429,7 @@ def page_portfolio() -> None:
     val = st.session_state.get(f"val_{which}")
     if val:
         show_valuation(*val)
+        show_rebalance(val[0], key, path)
     if stress and val:
         weights = hd.weights_from_holdings(val[0])
         if len(weights) < 2:
@@ -466,6 +473,69 @@ def show_valuation(table: pd.DataFrame, totals: dict) -> None:
         "Drift (pts)": st.column_config.NumberColumn(format="%+.1f")})
     note(f"Status REBALANCE = more than {hd.DRIFT_BAND:.0f} percentage points from target. "
          "Cash with a 0% target is treated as a buffer.")
+
+
+def show_rebalance(table: pd.DataFrame, key: str, path: Path) -> None:
+    section("Rebalance · trade calculator")
+    if table["target_%"].fillna(0).sum() <= 0:
+        note("Set target % for your positions (or load targets from an allocation) to get "
+             "a trade plan.")
+        return
+    cash_bal = float(table.loc[table["ticker"] == hd.CASH, "value"].sum())
+    c = st.columns([1, 1.4, 1, 1], gap="medium")
+    new_money = c[0].number_input("New money to invest ($)", min_value=0.0, value=0.0,
+                                  step=100.0, format="%.2f")
+    mode_label = c[1].radio("Method", ["Buy only (no selling)", "Full rebalance (buy and sell)"],
+                            help="Buy only never sells, so it never realises gains (no tax "
+                                 "event in a taxable account). Full rebalance also sells "
+                                 "overweight positions.")
+    use_cash = c[2].checkbox(f"Also invest CASH (${cash_bal:,.0f})", value=False,
+                             disabled=cash_bal <= 0)
+    fractional = c[3].checkbox("Fractional shares", value=False,
+                               help="Only if your broker supports them. Otherwise purchases "
+                                    "are rounded down to whole shares.")
+    mode = "full" if mode_label.startswith("Full") else "buy_only"
+    plan, s = hd.rebalance_plan(table, new_money, use_cash, mode, fractional)
+    if s["money_available"] <= 0 and mode == "buy_only":
+        note("Enter new money (or tick 'Also invest CASH') to see what to buy.")
+        return
+    m = st.columns(4)
+    m[0].metric("Cash to invest", fmt_money(s["money_available"]))
+    m[1].metric("Buys / sells", f"{fmt_money(s['spent_on_buys'])} / {fmt_money(s['sell_proceeds'])}")
+    m[2].metric("Left over", fmt_money(s["cash_left_over"]))
+    m[3].metric("Max drift (pts)", f"{s['max_drift_after']:.1f}",
+                delta=f"{s['max_drift_after'] - s['max_drift_now']:+.1f} from {s['max_drift_now']:.1f}",
+                delta_color="inverse")
+    st.dataframe(pd.DataFrame({
+        "Ticker": plan["ticker"], "Action": plan["action"], "Shares": plan["trade_shares"],
+        "Amount ($)": plan["trade_usd"].round(2), "Price": plan["price"],
+        "Weight now": plan["weight_now_%"], "Weight after": plan["weight_after_%"],
+        "Target": plan["target_%"], "Drift after (pts)": plan["drift_after_pts"],
+    }), hide_index=True, width="stretch", column_config={
+        "Shares": st.column_config.NumberColumn(format="%+.4f" if fractional else "%+.0f"),
+        "Amount ($)": st.column_config.NumberColumn(format="%+,.2f"),
+        "Price": st.column_config.NumberColumn(format="$%.2f"),
+        "Weight now": PCT, "Weight after": PCT, "Target": PCT,
+        "Drift after (pts)": st.column_config.NumberColumn(format="%+.1f")})
+    msgs = [f"Prices are the last close ({table.attrs.get('as_of', 'latest')}); they will move "
+            "before you trade, so amounts are approximate. Consider limit orders."]
+    if mode == "full" and s["sell_proceeds"] > 0:
+        msgs.append("Selling in a taxable account can trigger capital-gains tax; in an IRA or "
+                    "401(k) it does not.")
+    if not fractional:
+        msgs.append("Whole shares only: purchases are rounded down, so a little cash is left.")
+    note(" ".join(msgs) + " Not financial advice.")
+    if s["n_trades"] and st.button("I placed these trades → update my positions",
+                                   help="Adds the trades to your saved positions (shares, "
+                                        "cost basis and CASH) and saves the file."):
+        updated = hd.apply_plan(st.session_state[key], plan, s)
+        hd.save_holdings(updated, path)
+        st.session_state[key] = updated
+        bump(key)
+        for k in [k for k in st.session_state if k.startswith(("val_", "stress_"))]:
+            del st.session_state[k]
+        st.toast("Positions updated and saved. Click Value to see the new mix.")
+        st.rerun()
 
 
 def show_stress(res: dict) -> None:

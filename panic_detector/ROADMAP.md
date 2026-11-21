@@ -118,6 +118,11 @@ volatility, not correlation.
 - [x] **UI redesign:** minimal "quant desk" style: IBM Plex Sans/Mono, monochrome + one accent,
       no emojis, numeric sortable tables, interactive Altair charts (charts.py) with hover values;
       daily report HTML restyled to match
+- [x] **Fresh data:** saved prices re-download when older than 12 h (`--cache-hours`), fall back
+      to saved prices with a warning if offline; "Refresh prices" button; price date shown
+- [x] **Rebalance calculator:** buy-only (minimises the largest shortfall in % points, never
+      sells) or full rebalance; whole or fractional shares; never overspends (4,000 random
+      plans tested); "I placed these trades" updates shares, cost basis and CASH
 - [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification
 
 ## Research track (later, optional)

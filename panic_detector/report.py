@@ -59,7 +59,7 @@ def market_regime(cfg: pdx.Config, synthetic: bool = False) -> dict:
     """Current regime from the 41-stock correlation detector plus market volatility."""
     start = str(date.today() - timedelta(days=5 * 365))
     rcfg = dataclasses.replace(pdx.Config(), start=start, cache_dir=cfg.cache_dir,
-                               outdir=cfg.outdir, refresh=not synthetic, make_gif=False)
+                               outdir=cfg.outdir, refresh=False, make_gif=False)
     if synthetic:
         prices, _ = pdx.generate_synthetic_prices(rcfg)
     else:
@@ -88,7 +88,7 @@ def holdings_history(table: pd.DataFrame, cfg: pdx.Config,
     inv = table[(table["ticker"] != hd.CASH) & (table["shares"] != 0)]
     tickers = list(inv["ticker"])
     cash = float(table.loc[table["ticker"] == hd.CASH, "value"].sum())
-    hcfg = dataclasses.replace(cfg, start="2019-01-01", refresh=not synthetic)
+    hcfg = dataclasses.replace(cfg, start="2019-01-01", refresh=False)  # 12 h freshness rule
     if not tickers:
         return pd.DataFrame(), pd.Series(dtype=float)
     if synthetic:

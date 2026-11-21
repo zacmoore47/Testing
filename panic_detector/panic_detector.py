@@ -44,6 +44,7 @@ import logging
 import math
 import sys
 import textwrap
+import time
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -187,6 +188,7 @@ class Config:
     outdir: Path = Path("outputs")
     cache_dir: Path = Path("data")
     refresh: bool = False  # ignore cache and re-download
+    max_cache_age_hours: float | None = 12.0  # re-download saved prices older than this
     make_gif: bool = True
     gif_stride: int | None = None  # every k-th window as a GIF frame; None = auto (~240 frames)
     fps: int = 12
@@ -236,38 +238,66 @@ def download_prices(cfg: Config, tickers: list[str] | None = None,
                     cache_name: str | None = None) -> pd.DataFrame:
     """Download auto-adjusted closes for the universe plus the market ticker, with CSV cache.
 
-    ``tickers``/``cache_name`` override the universe (used by the portfolio stress test).
-    The cache is reused if it contains every requested ticker and covers the requested
-    start date. Use ``--refresh`` to force a new download (e.g. to pick up recent days).
+    ``tickers``/``cache_name`` override the universe (used by the portfolio tools).
+    The cache is reused only if it holds every requested ticker, covers the requested start
+    date, AND was downloaded less than ``cfg.max_cache_age_hours`` ago; otherwise prices
+    are re-downloaded so results never silently stop at an old date. If that refresh fails
+    (e.g. no internet), the older cached prices are used with a warning. ``--refresh``
+    forces a new download.
     """
     wanted = list(dict.fromkeys((tickers or cfg.tickers) + [cfg.market_ticker]))
     path = cfg.cache_dir / cache_name if cache_name else _cache_path(cfg)
     meta_path = path.with_suffix(".meta.json")
+    stale: pd.DataFrame | None = None
     if path.exists() and not cfg.refresh:
         cached = pd.read_csv(path, index_col=0, parse_dates=True)
-        if meta_path.exists():
+        meta = json.loads(meta_path.read_text()) if meta_path.exists() else {}
+        if meta:
             # The meta file remembers what was ASKED for, so tickers with no data (or that
             # started later than the requested date) do not force a re-download every run.
-            meta = json.loads(meta_path.read_text())
-            ok = (set(wanted).issubset(meta.get("requested", []))
-                  and pd.Timestamp(cfg.start) >= pd.Timestamp(meta.get("start", "2100-01-01")))
+            covers = (set(wanted).issubset(meta.get("requested", []))
+                      and pd.Timestamp(cfg.start) >= pd.Timestamp(meta.get("start", "2100-01-01")))
         else:
-            ok = (set(wanted).issubset(cached.columns)
-                  and cached.index.min() <= pd.Timestamp(cfg.start) + pd.Timedelta(days=7))
-        if ok:
-            log.info("Loaded cached prices from %s (%d rows, last %s)", path, len(cached),
-                     cached.index.max().date())
+            covers = (set(wanted).issubset(cached.columns)
+                      and cached.index.min() <= pd.Timestamp(cfg.start) + pd.Timedelta(days=7))
+        age_h = (time.time() - meta.get("downloaded_at", path.stat().st_mtime)) / 3600
+        fresh = cfg.max_cache_age_hours is None or age_h <= cfg.max_cache_age_hours
+        if covers:
             out = cached[[c for c in wanted if c in cached.columns]]
             if cfg.end:
                 out = out.loc[: cfg.end]
-            return out.loc[cfg.start:]
-        log.info("Cache at %s does not cover the request; re-downloading", path)
+            out = out.loc[cfg.start:]
+            if fresh:
+                log.info("Using saved prices from %s (last price %s, downloaded %.1f h ago)",
+                         path.name, cached.index.max().date(), age_h)
+                return out
+            stale = out
+            log.info("Saved prices in %s are %.0f h old (last price %s): refreshing", path.name,
+                     age_h, cached.index.max().date())
+        else:
+            log.info("Saved prices in %s do not cover this request: downloading", path.name)
+    try:
+        close = _yahoo_download(wanted, cfg)
+    except DataDownloadError as exc:
+        if stale is not None:
+            log.warning("Refresh failed (%s): USING OLDER SAVED PRICES up to %s", exc,
+                        stale.index.max().date())
+            return stale
+        raise
+    cfg.cache_dir.mkdir(parents=True, exist_ok=True)
+    close.to_csv(path)
+    meta_path.write_text(json.dumps({"start": cfg.start, "requested": wanted,
+                                     "downloaded_at": time.time()}))
+    log.info("Saved prices to %s (last price %s)", path.name, close.index.max().date())
+    return close
 
+
+def _yahoo_download(wanted: list[str], cfg: Config) -> pd.DataFrame:
+    """One yfinance call for all tickers; raises DataDownloadError on any failure."""
     try:
         import yfinance as yf
     except ImportError as exc:  # pragma: no cover - environment specific
         raise DataDownloadError("yfinance is not installed") from exc
-
     log.info("Downloading %d tickers from Yahoo Finance (%s -> %s)...", len(wanted), cfg.start,
              cfg.end or "today")
     try:
@@ -275,7 +305,6 @@ def download_prices(cfg: Config, tickers: list[str] | None = None,
                           progress=False, threads=True)
     except Exception as exc:  # yfinance raises many exception types
         raise DataDownloadError(f"yfinance download failed: {exc}") from exc
-
     if raw is None or raw.empty:
         raise DataDownloadError("yfinance returned no data")
     if isinstance(raw.columns, pd.MultiIndex):
@@ -289,12 +318,16 @@ def download_prices(cfg: Config, tickers: list[str] | None = None,
     missing = sorted(set(wanted) - set(close.columns))
     if missing:
         log.warning("No data for: %s", ", ".join(missing))
-
-    cfg.cache_dir.mkdir(parents=True, exist_ok=True)
-    close.to_csv(path)
-    meta_path.write_text(json.dumps({"start": cfg.start, "requested": wanted}))
-    log.info("Cached prices to %s", path)
     return close
+
+
+def clear_price_cache(cache_dir: Path) -> int:
+    """Delete all saved price files so the next run downloads fresh prices."""
+    n = 0
+    for f in list(cache_dir.glob("prices_cache*.csv")) + list(cache_dir.glob("prices_cache*.meta.json")):
+        f.unlink()
+        n += 1
+    return n
 
 
 # Older look-alike funds used to extend an ETF's history back before it launched, in order
@@ -1542,6 +1575,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--synthetic", action="store_true", help="use synthetic one-factor data and run the self-test")
     p.add_argument("--self-test", action="store_true", help="run the synthetic self-test only and exit")
     p.add_argument("--refresh", action="store_true", help="ignore the price cache and re-download")
+    p.add_argument("--cache-hours", type=float, default=12.0,
+                   help="re-download saved prices older than this many hours (default 12)")
     p.add_argument("--no-gif", action="store_true", help="skip the (slow) GIF animation")
     p.add_argument("--gif-stride", type=int, default=None,
                    help="use every k-th window as a GIF frame (default: auto, ~240 frames)")
@@ -1571,6 +1606,7 @@ def main(argv: list[str] | None = None) -> int:
                  z_mode=args.z_mode, z_lookback_days=args.z_lookback_days,
                  z_min_days=args.z_min_days,
                  outdir=outdir, cache_dir=args.cache_dir, refresh=args.refresh,
+                 max_cache_age_hours=args.cache_hours,
                  make_gif=not args.no_gif, gif_stride=args.gif_stride, fps=args.fps,
                  use_proxies=not args.no_proxies)
     if cfg.window < 10 or cfg.step < 1:
