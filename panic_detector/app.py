@@ -23,8 +23,10 @@ import streamlit.components.v1 as components
 
 import charts as ch
 import compare
+import hedges as hg
 import holdings as hd
 import panic_detector as pdx
+import projections as pj
 import report as rp
 
 BASE = Path(__file__).resolve().parent
@@ -176,7 +178,7 @@ with st.sidebar:
     st.markdown("<div class='wordmark'>PORTFOLIO<span>/</span>LAB</div>", unsafe_allow_html=True)
     st.markdown("<div class='meta'>Correlation · risk · robustness</div>", unsafe_allow_html=True)
     st.markdown("<div class='section'>Navigate</div>", unsafe_allow_html=True)
-    page = st.radio("Page", ["Compare", "Portfolio", "Daily report"],
+    page = st.radio("Page", ["Compare", "Portfolio", "Projections", "Hedges", "Daily report"],
                     label_visibility="collapsed")
     st.markdown("<div class='section'>Data</div>", unsafe_allow_html=True)
     demo = st.toggle("Demo data", value=False,
@@ -649,9 +651,236 @@ def page_report() -> None:
         components.html(page_html, height=2400, scrolling=True)
 
 
+# ---------------------------------------------------------------------------------------
+# Shared: pick a portfolio (a candidate allocation or one of your holdings files)
+# ---------------------------------------------------------------------------------------
+
+
+def portfolio_sources() -> dict[str, tuple[str, Path]]:
+    out = {f"Allocation · {n}": ("cand", p) for n, p in candidate_files().items()}
+    MY_DIR.mkdir(parents=True, exist_ok=True)
+    for p in sorted(MY_DIR.glob("*.csv")):
+        if not p.stem.endswith("_history"):
+            out[f"My portfolio · {p.stem}"] = ("mine", p)
+    return out
+
+
+def weights_for(kind: str, path: Path) -> tuple[pd.Series, str]:
+    """Weights by ticker. Holdings use current market values (else their targets)."""
+    if kind == "cand":
+        return pdx.load_portfolio(path, min_holdings=1), "target weights"
+    h = hd.load_holdings(path)
+    if (h.loc[h["ticker"] != hd.CASH, "shares"] > 0).any():
+        table, _ = hd.value_holdings(h, make_cfg(), demo)
+        w = hd.weights_from_holdings(table)
+        if len(w):
+            return w, "current market values (cash excluded)"
+    t = h[(h["ticker"] != hd.CASH) & (h["target_weight"] > 0)]
+    return pd.Series(t["target_weight"].to_numpy(), index=t["ticker"]) / t["target_weight"].sum(), \
+        "target weights"
+
+
+def weights_caption(w: pd.Series, basis: str) -> None:
+    parts = " · ".join(f"{t} {100 * x:.0f}%" for t, x in w.sort_values(ascending=False).items())
+    st.markdown(f"<div class='meta'>WEIGHTS ({basis.upper()}) · {parts}</div>", unsafe_allow_html=True)
+
+
+# ---------------------------------------------------------------------------------------
+# Page: Projections
+# ---------------------------------------------------------------------------------------
+
+
+def page_projections() -> None:
+    header("Planning", "Projections",
+           "What regular investing could grow to, as a range. Futures are built from random "
+           "12-month stretches of this portfolio's actual history (back to the 1990s–2000s, "
+           "depending on its funds), thousands of times.")
+    sources = portfolio_sources()
+    if not sources:
+        note("Create an allocation on the Compare page first.")
+        return
+    section("Plan")
+    c = st.columns([1.6, 1, 1, 1], gap="medium")
+    src = c[0].selectbox("Portfolio", list(sources))
+    initial = c[1].number_input("Starting amount ($)", min_value=0.0, value=10_000.0, step=1000.0)
+    monthly = c[2].number_input("Added every month ($)", min_value=0.0, value=500.0, step=50.0)
+    years = c[3].slider("Years", 1, 40, 20)
+    c = st.columns([1, 1, 1, 1], gap="medium")
+    real = c[0].toggle("Today's dollars", value=True,
+                       help="Removes inflation so amounts are in today's purchasing power.")
+    infl = c[1].number_input("Inflation %/yr", 0.0, 10.0, 2.5, 0.1, disabled=not real)
+    fee = c[2].number_input("Fund fees %/yr", 0.0, 2.0, 0.05, 0.01,
+                            help="Weighted expense ratio; most broad index ETFs are 0.03–0.10%.")
+    adjust = c[3].number_input("Pessimism %/yr", 0.0, 5.0, 0.0, 0.25,
+                               help="Subtract this from every year's return. 2000–2026 was a "
+                                    "strong period for US stocks and bonds; 1–2% is a common "
+                                    "cautious adjustment.")
+    goal = st.number_input("Optional goal ($)", min_value=0.0, value=0.0, step=10_000.0)
+    if st.button("Run projection", type="primary"):
+        kind, path = sources[src]
+        with st.spinner("Downloading history and simulating 5,000 futures"):
+            try:
+                w, basis = weights_for(kind, path)
+                plan = pj.Plan(initial=initial, monthly=monthly, years=years, fee_pct=fee,
+                               adjust_pct=adjust, inflation_pct=infl, real=real,
+                               goal=goal or None)
+                res = pj.project(w, plan, make_cfg(), synthetic=demo)
+                res["basis"] = basis
+                st.session_state["projection"] = res
+            except Exception as exc:
+                st.error(f"Projection failed: {exc}")
+    res = st.session_state.get("projection")
+    if res:
+        show_projection(res)
+
+
+def show_projection(res: dict) -> None:
+    s, plan, paths = res["summary"], res["plan"], res["paths"]
+    section("Result")
+    if res["synthetic"]:
+        flag("Synthetic prices: results are illustrative only.", negative=True)
+    weights_caption(res["weights"], res["basis"])
+    st.markdown(f"<div class='meta'>HISTORY {s['history_start']:%Y-%m} → {s['history_end']:%Y-%m} "
+                f"({s['history_months']} MONTHS, {100 * s['hist_ann_return']:.1f}%/YR) · "
+                f"{plan.sims:,} SIMULATIONS · {'REAL (TODAY’S $)' if plan.real else 'NOMINAL $'} · "
+                f"FEES {plan.fee_pct:.2f}% · PESSIMISM {plan.adjust_pct:.2f}%</div>",
+                unsafe_allow_html=True)
+    f = s["final"]
+    m = st.columns(5)
+    m[0].metric("Contributed", fmt_money(s["contributed"]))
+    m[1].metric("Bad case (10th pct)", fmt_money(f[10]))
+    m[2].metric("Median", fmt_money(f[50]))
+    m[3].metric("Good case (90th pct)", fmt_money(f[90]))
+    m[4].metric("P(below contributed)", f"{100 * s['p_below_contributed']:.0f}%")
+    if s["p_goal"] is not None:
+        st.markdown(f"<div class='meta'>CHANCE OF REACHING {fmt_money(plan.goal)}: "
+                    f"{100 * s['p_goal']:.0f}%</div>", unsafe_allow_html=True)
+    a, b = st.columns([1.6, 1], gap="large")
+    with a:
+        st.markdown("<div class='meta'>VALUE OVER TIME · BANDS 10–90% AND 25–75% · DASHED = "
+                    "CONTRIBUTED</div>", unsafe_allow_html=True)
+        chart(ch.fan_chart(paths, plan.goal))
+    with b:
+        ms = pj.milestones(paths)
+        st.markdown("<div class='meta'>MILESTONES</div>", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame({
+            "Year": ms["year"].round(0).astype(int), "Contributed": ms["contributed"],
+            "Bad (10th)": ms["p10"], "Median": ms["p50"], "Good (90th)": ms["p90"]}),
+            hide_index=True, width="stretch", column_config={
+                "Contributed": USD, "Bad (10th)": USD, "Median": USD, "Good (90th)": USD})
+        ar = s["ann_return"]
+        st.dataframe(pd.DataFrame({
+            "Measure": ["Return per year · bad (10th)", "Return per year · median",
+                        "Return per year · good (90th)", "Worst drop along the way · median",
+                        "Worst drop along the way · bad (10th)"],
+            "Value": [100 * ar[10], 100 * ar[50], 100 * ar[90], 100 * s["max_drawdown_median"],
+                      100 * s["max_drawdown_p10"]]}), hide_index=True, width="stretch",
+            column_config={"Value": st.column_config.NumberColumn(format="%+.1f%%")})
+    note("A range, not a forecast: it assumes the future resembles shuffled pieces of 2000–today. "
+         "It cannot include shocks worse than any seen in that period. Use the pessimism setting "
+         "to stress the plan. Not financial advice.")
+
+
+# ---------------------------------------------------------------------------------------
+# Page: Hedges
+# ---------------------------------------------------------------------------------------
+
+
+def page_hedges() -> None:
+    header("Risk", "Hedge finder",
+           "Which assets historically offset this portfolio's losses, and what they cost in "
+           "return. Tests common hedge ETFs plus any tickers you add.")
+    sources = portfolio_sources()
+    if not sources:
+        note("Create an allocation on the Compare page first.")
+        return
+    section("Setup")
+    c = st.columns([1.6, 1, 1.6], gap="medium")
+    src = c[0].selectbox("Portfolio", list(sources))
+    add = c[1].slider("Test holding (%)", 5, 30, 10, 5,
+                      help="Each candidate is tested as this share of the portfolio, with the "
+                           "rest held pro rata in your current mix.")
+    extra = c[2].text_input("Also test these tickers (comma separated)",
+                            placeholder="e.g. KO, JNJ, BRK-B, DBMF")
+    if st.button("Find hedges", type="primary"):
+        kind, path = sources[src]
+        with st.spinner("Downloading histories and testing candidates"):
+            try:
+                w, basis = weights_for(kind, path)
+                res = hg.analyse(w, make_cfg(), add_pct=add, extra=extra.split(","),
+                                 synthetic=demo)
+                res["basis"] = basis
+                st.session_state["hedges"] = res
+            except Exception as exc:
+                st.error(f"Hedge analysis failed: {exc}")
+    res = st.session_state.get("hedges")
+    if res:
+        show_hedges(res)
+
+
+def show_hedges(res: dict) -> None:
+    t = res["table"]
+    section("Candidates")
+    if res["synthetic"]:
+        flag("Synthetic prices: results are illustrative only.", negative=True)
+    weights_caption(res["weights"], res["basis"])
+    st.markdown(f"<div class='meta'>PORTFOLIO HISTORY FROM {res['port_start']:%Y-%m-%d} · "
+                f"WORST DROP {res['port_maxdd_%']:.1f}% · EACH CANDIDATE TESTED AT "
+                f"{res['add_pct']:.0f}% · MEASURED OVER THE YEARS BOTH EXIST</div>",
+                unsafe_allow_html=True)
+    if t.empty:
+        note("No candidate had enough overlapping history.")
+        return
+    st.dataframe(pd.DataFrame({
+        "Ticker": t["ticker"], "What": t["what"], "Verdict": t["verdict"],
+        "In your worst weeks": t["tail_ret_%"], "Corr.": t["corr"],
+        "Up in your losing crises": t["crises_up"], "Worst drop Δ": t["maxdd_change_pts"],
+        "Volatility Δ": t["vol_change_pts"], "Growth Δ /yr": t["cagr_change_pts"],
+        "Own growth /yr": t["cagr_%"], "Since": t["since"],
+    }), hide_index=True, width="stretch", column_config={
+        "In your worst weeks": st.column_config.NumberColumn(format="%+.2f%%",
+            help="Average weekly return during the portfolio's worst 5% of weeks"),
+        "Corr.": st.column_config.NumberColumn(format="%+.2f"),
+        "Worst drop Δ": st.column_config.NumberColumn(format="%+.1f",
+            help="Points by which the worst drop gets smaller (positive = more protection)"),
+        "Volatility Δ": st.column_config.NumberColumn(format="%+.1f"),
+        "Growth Δ /yr": st.column_config.NumberColumn(format="%+.2f",
+            help="Change in growth per year: the cost of holding the hedge"),
+        "Own growth /yr": PCT})
+    note("Hedge = rose in your worst weeks, cut the worst drop and rose in most crises where "
+         "you lost money. Diversifier = softened the worst drop without rising. Deltas compare "
+         "the portfolio with and without the candidate over the same years.")
+    for tk, txt in [(r["ticker"], r["note"]) for _, r in t.iterrows() if r["note"]]:
+        st.markdown(f"<div class='meta'>{tk} · {txt}</div>", unsafe_allow_html=True)
+    st.markdown("<div class='meta'>PROTECTION VS COST</div>", unsafe_allow_html=True)
+    chart(ch.hedge_scatter(t))
+    if True:
+        cr = res["crises"]
+        if not cr.empty:
+            port = cr.groupby("crisis", sort=False)["portfolio"].first()
+            rows = cr[cr["ticker"].isin(t["ticker"])]
+            port_rows = pd.DataFrame({"ticker": "YOUR PORTFOLIO", "crisis": port.index,
+                                      "ret": port.to_numpy()})
+            long = pd.concat([port_rows, rows[["ticker", "crisis", "ret"]]])
+            st.markdown("<div class='meta'>RETURN IN EACH CRISIS · %</div>", unsafe_allow_html=True)
+            long = long.replace({"ticker": {"YOUR PORTFOLIO": "YOU"}})
+            chart(ch.heatmap(long, "crisis", "ticker", "ret", list(port.index),
+                             ["YOU"] + list(t["ticker"])))
+    if res["skipped"]:
+        st.markdown("<div class='meta'>SKIPPED · " + " · ".join(res["skipped"]) + "</div>",
+                    unsafe_allow_html=True)
+    note("Hedges change with the type of crisis (Treasuries protected in 2008 and 2020 but fell "
+         "with stocks in 2022). Prefer candidates that helped across several crises, and weigh "
+         "the cost in growth. Analysis of past data, not a recommendation.")
+
+
 if page == "Compare":
     page_compare()
 elif page == "Portfolio":
     page_portfolio()
+elif page == "Projections":
+    page_projections()
+elif page == "Hedges":
+    page_hedges()
 else:
     page_report()

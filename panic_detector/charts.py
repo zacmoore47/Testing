@@ -123,7 +123,8 @@ def heatmap(df: pd.DataFrame, row: str, col: str, value: str, row_order: list[st
                                         interpolate="rgb")),
         tooltip=[alt.Tooltip(f"{row}:N"), alt.Tooltip(f"{col}:N"),
                  alt.Tooltip(f"{value}:Q", title="Return %", format="+.1f")])
-    text = base.mark_text(fontSize=11, color=INK).encode(text=alt.Text(f"{value}:Q", format="+.0f"))
+    size = 11 if len(col_order) <= 9 else 9
+    text = base.mark_text(fontSize=size, color=INK).encode(text=alt.Text(f"{value}:Q", format="+.0f"))
     return style(alt.layer(rect, text), height or max(160, 34 * len(row_order)))
 
 
@@ -227,3 +228,52 @@ def replay_bars(replay: pd.DataFrame, market: str = "SPY") -> alt.TopLevelMixin:
         color=alt.Color("who:N", scale=alt.Scale(domain=["Your mix", market], range=[BLUE, GREY])),
         tooltip=[alt.Tooltip("crisis:N"), alt.Tooltip("who:N"), alt.Tooltip("ret:Q", format="+.1f")])
     return style(ch, 44 * len(order) + 50)
+
+
+def fan_chart(paths: pd.DataFrame, goal: float | None = None) -> alt.TopLevelMixin:
+    """Projection fan: 10-90% and 25-75% bands, median line, amount contributed."""
+    p = paths.copy()
+    base = alt.Chart(p).encode(x=alt.X("year:Q", title="Years from now",
+                                       axis=alt.Axis(format=".0f", tickMinStep=1)))
+    outer = base.mark_area(color=BLUE, opacity=0.12).encode(
+        y=alt.Y("p10:Q", title="Portfolio value ($)", axis=alt.Axis(format="$,.0f")), y2="p90:Q")
+    inner = base.mark_area(color=BLUE, opacity=0.25).encode(y="p25:Q", y2="p75:Q")
+    median = base.mark_line(color=BLUE, strokeWidth=2).encode(y="p50:Q")
+    contrib = base.mark_line(color=INK, strokeDash=[4, 3], strokeWidth=1.2).encode(y="contributed:Q")
+    nearest = alt.selection_point(nearest=True, on="pointerover", fields=["year"], empty=False)
+    rule = base.mark_rule(color=GREY).encode(
+        opacity=alt.condition(nearest, alt.value(0.8), alt.value(0)),
+        tooltip=[alt.Tooltip("year:Q", title="Year", format=".1f"),
+                 alt.Tooltip("p95:Q", title="Good (95th)", format="$,.0f"),
+                 alt.Tooltip("p75:Q", title="75th", format="$,.0f"),
+                 alt.Tooltip("p50:Q", title="Median", format="$,.0f"),
+                 alt.Tooltip("p25:Q", title="25th", format="$,.0f"),
+                 alt.Tooltip("p5:Q", title="Bad (5th)", format="$,.0f"),
+                 alt.Tooltip("contributed:Q", title="Contributed", format="$,.0f")]).add_params(nearest)
+    layers = [outer, inner, contrib, median, rule]
+    if goal:
+        layers.append(alt.Chart(pd.DataFrame({"g": [goal]})).mark_rule(color=RED, strokeDash=[2, 2])
+                      .encode(y="g:Q"))
+    return style(alt.layer(*layers), 360)
+
+
+def hedge_scatter(table: pd.DataFrame) -> alt.TopLevelMixin:
+    """Protection (worst-drop improvement) vs cost (growth given up) per candidate."""
+    verdicts = ["Hedge", "Diversifier", "No help"]
+    base = alt.Chart(table).encode(
+        x=alt.X("cagr_change_pts:Q", title="Change in growth per year (pts)  ← costs return",
+                axis=alt.Axis(format="+.2f", tickCount=6), scale=alt.Scale(padding=24)),
+        y=alt.Y("maxdd_change_pts:Q", title="Smaller worst drop (pts)  ↑ more protection",
+                axis=alt.Axis(format="+.1f", tickCount=6), scale=alt.Scale(padding=16)),
+        color=alt.Color("verdict:N", scale=alt.Scale(domain=verdicts, range=[BLUE, "#eda100", GREY]),
+                        legend=alt.Legend(title=None)),
+        tooltip=[alt.Tooltip("ticker:N"), alt.Tooltip("what:N", title="What"),
+                 alt.Tooltip("verdict:N"), alt.Tooltip("maxdd_change_pts:Q", title="Worst drop Δ pts", format="+.1f"),
+                 alt.Tooltip("cagr_change_pts:Q", title="Growth Δ pts/yr", format="+.2f"),
+                 alt.Tooltip("tail_ret_%:Q", title="Return in your worst weeks %", format="+.2f")])
+    pts = base.mark_point(filled=True, size=90, opacity=1, stroke="white")
+    labels = base.mark_text(align="left", dx=8, fontSize=10, color=INK).encode(text="ticker:N",
+                                                                                color=alt.value(INK))
+    zero_x = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color=AXIS).encode(x="z:Q")
+    zero_y = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color=AXIS).encode(y="z:Q")
+    return style(alt.layer(zero_x, zero_y, pts, labels), 340)

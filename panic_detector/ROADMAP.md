@@ -123,6 +123,14 @@ volatility, not correlation.
 - [x] **Rebalance calculator:** buy-only (minimises the largest shortfall in % points, never
       sells) or full rebalance; whole or fractional shares; never overspends (4,000 random
       plans tested); "I placed these trades" updates shares, cost basis and CASH
+- [x] **Projections page:** circular block bootstrap (12-month blocks) of the portfolio's real
+      monthly returns; fees, inflation (today's $), pessimism adjustment, goal probability;
+      fan chart + milestones. Validated: constant return = savings formula exactly; bootstrap
+      median matches history within ~0.1%/yr (a non-circular version was biased and replaced)
+- [x] **Hedge finder page:** 14 common hedge ETFs + user tickers; return in the portfolio's
+      worst 5% weeks, correlation, rise in crises where the portfolio lost, and the effect of
+      holding X% (worst drop, volatility, growth cost); verdicts Hedge / Diversifier / No help
+      validated on known synthetic cases (opposite mover, unrelated, same mover)
 - [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification
 
 ## Research track (later, optional)
