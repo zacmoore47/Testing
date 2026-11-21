@@ -15,6 +15,8 @@ Usage (from the panic_detector folder):
 
 Assumptions: portfolios are rebalanced to their target weights (approximated daily);
 prices are dividend-adjusted (total return); fees, taxes and trading costs are ignored.
+Before an ETF existed, its history is extended with a look-alike fund (see PROXIES in
+panic_detector.py); turn this off with --no-proxies.
 """
 from __future__ import annotations
 
@@ -111,7 +113,9 @@ def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> 
 
     if not synthetic:
         try:
-            prices = pdx.download_prices(cfg, tickers=union, cache_name="prices_cache_compare.csv")
+            extra = pdx.proxy_tickers(union) if cfg.use_proxies else []
+            prices = pdx.download_prices(cfg, tickers=union + extra,
+                                         cache_name="prices_cache_compare.csv")
         except pdx.DataDownloadError as exc:
             log.error("%s -> falling back to SYNTHETIC data", exc)
             synthetic = True
@@ -120,6 +124,15 @@ def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> 
         syn = pdx.Config(universe={"All": union}, start=cfg.start, end=cfg.end, seed=cfg.seed,
                          market_ticker=cfg.market_ticker)
         prices, _ = pdx.generate_synthetic_prices(syn)
+
+    proxy_lines: list[str] = []
+    if cfg.use_proxies:
+        spliced, notes = pdx.splice_proxies(prices, union)
+        spliced[cfg.market_ticker] = prices[cfg.market_ticker]
+        prices = spliced
+        proxy_lines = pdx.describe_proxies(notes)
+        for line in proxy_lines:
+            log.info("Longer history via proxy: %s", line)
 
     # One common period for every portfolio, so the comparison is fair.
     have = [t for t in union if t in prices.columns and prices[t].notna().any()]
@@ -166,7 +179,8 @@ def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> 
     pd.DataFrame(values).to_csv(outdir / "portfolio_values.csv", float_format="%.5f")
     log.info("Saved %s and %s", outdir / "comparison.csv", outdir / "portfolio_values.csv")
     log_comparison(summary, crisis_table, common_start, prices.index[-1])
-    plot_comparison(summary, crisis_table, values, common_start, outdir / "comparison.png")
+    plot_comparison(summary, crisis_table, values, common_start, outdir / "comparison.png",
+                    proxy_lines)
     return summary
 
 
@@ -191,7 +205,8 @@ def log_comparison(summary: pd.DataFrame, crisis_table: pd.DataFrame,
 
 
 def plot_comparison(summary: pd.DataFrame, crisis_table: pd.DataFrame,
-                    values: dict[str, pd.Series], start: pd.Timestamp, path: Path) -> None:
+                    values: dict[str, pd.Series], start: pd.Timestamp, path: Path,
+                    proxy_lines: list[str] | None = None) -> None:
     """2x2 dashboard: growth of $10k, drawdowns, risk/return map, crisis heatmap."""
     names = list(summary["portfolio"])
     colors = {n: SERIES_COLORS[i % len(SERIES_COLORS)] for i, n in enumerate(names)}
@@ -248,8 +263,12 @@ def plot_comparison(summary: pd.DataFrame, crisis_table: pd.DataFrame,
 
     fig.suptitle(f"Portfolio comparison since {start:%b %Y} (rebalanced, before fees and taxes)",
                  fontsize=14, color=pdx.INK)
-    fig.text(0.5, 0.01, HINDSIGHT_NOTE, ha="center", fontsize=9, color=pdx.INK_MUTED, wrap=True)
-    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    foot = HINDSIGHT_NOTE
+    if proxy_lines:
+        foot += "\nEarlier years use look-alike funds before an ETF existed: " + "; ".join(proxy_lines)
+    fig.text(0.5, 0.005, foot, ha="center", va="bottom", fontsize=8.5, color=pdx.INK_MUTED,
+             wrap=True)
+    fig.tight_layout(rect=(0, 0.045 if proxy_lines else 0.03, 1, 0.96))
     fig.savefig(path, dpi=130)
     plt.close(fig)
     log.info("Saved %s", path)

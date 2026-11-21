@@ -37,6 +37,7 @@ Outputs (./outputs/ for stocks, ./outputs/etfs/ for --universe etfs):
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import math
 import sys
@@ -174,6 +175,7 @@ class Config:
     z_min_days: int = 252  # z-score needs this many trading days of history
     drawdown_shade: float = 0.10  # shade SPY drawdowns deeper than this
     seed: int = 42
+    use_proxies: bool = True  # portfolio/compare: extend ETF history with look-alike funds
     outdir: Path = Path("outputs")
     cache_dir: Path = Path("data")
     refresh: bool = False  # ignore cache and re-download
@@ -232,13 +234,22 @@ def download_prices(cfg: Config, tickers: list[str] | None = None,
     """
     wanted = list(dict.fromkeys((tickers or cfg.tickers) + [cfg.market_ticker]))
     path = cfg.cache_dir / cache_name if cache_name else _cache_path(cfg)
+    meta_path = path.with_suffix(".meta.json")
     if path.exists() and not cfg.refresh:
         cached = pd.read_csv(path, index_col=0, parse_dates=True)
-        covers_start = cached.index.min() <= pd.Timestamp(cfg.start) + pd.Timedelta(days=7)
-        if set(wanted).issubset(cached.columns) and covers_start:
+        if meta_path.exists():
+            # The meta file remembers what was ASKED for, so tickers with no data (or that
+            # started later than the requested date) do not force a re-download every run.
+            meta = json.loads(meta_path.read_text())
+            ok = (set(wanted).issubset(meta.get("requested", []))
+                  and pd.Timestamp(cfg.start) >= pd.Timestamp(meta.get("start", "2100-01-01")))
+        else:
+            ok = (set(wanted).issubset(cached.columns)
+                  and cached.index.min() <= pd.Timestamp(cfg.start) + pd.Timedelta(days=7))
+        if ok:
             log.info("Loaded cached prices from %s (%d rows, last %s)", path, len(cached),
                      cached.index.max().date())
-            out = cached[wanted]
+            out = cached[[c for c in wanted if c in cached.columns]]
             if cfg.end:
                 out = out.loc[: cfg.end]
             return out.loc[cfg.start:]
@@ -273,8 +284,71 @@ def download_prices(cfg: Config, tickers: list[str] | None = None,
 
     cfg.cache_dir.mkdir(parents=True, exist_ok=True)
     close.to_csv(path)
+    meta_path.write_text(json.dumps({"start": cfg.start, "requested": wanted}))
     log.info("Cached prices to %s", path)
     return close
+
+
+# Older look-alike funds used to extend an ETF's history back before it launched, in order
+# of preference (most similar first). Mostly Vanguard index mutual funds tracking the same or
+# a very similar index; GC=F is the gold futures price. Proxies carry slightly different fees,
+# so spliced years are close approximations, not exact history.
+PROXIES: dict[str, list[str]] = {
+    "VTI": ["VTSMX"], "ITOT": ["VTI", "VTSMX"], "SCHB": ["VTI", "VTSMX"],
+    "VOO": ["SPY"], "IVV": ["SPY"], "SPLG": ["SPY"],
+    "VXUS": ["VEU", "VGTSX"], "IXUS": ["VEU", "VGTSX"], "VEU": ["VGTSX"],
+    "VEA": ["EFA"], "IEFA": ["EFA"], "VWO": ["EEM"], "IEMG": ["EEM"],
+    "BND": ["AGG", "VBMFX"], "AGG": ["VBMFX"], "SCHZ": ["AGG", "VBMFX"],
+    "TLT": ["VUSTX"], "IEF": ["VFITX"], "SHY": ["VFISX"], "TIP": ["VIPSX"],
+    "GLD": ["GC=F"], "IAU": ["GLD", "GC=F"], "GLDM": ["GLD", "GC=F"],
+    "VNQ": ["VGSIX"],
+}
+
+
+def proxy_tickers(tickers: list[str]) -> list[str]:
+    """All proxy tickers needed to extend the given tickers' history."""
+    return list(dict.fromkeys(p for t in tickers for p in PROXIES.get(t, []) if p not in tickers))
+
+
+def splice_proxies(prices: pd.DataFrame, tickers: list[str]) -> tuple[pd.DataFrame, dict]:
+    """Extend each ticker's price history backwards using its proxies (see PROXIES).
+
+    Before the ticker's first price, the proxy's returns are used, scaled so the two series
+    join exactly on the splice date. Proxies are applied in order, each reaching further back.
+    Tickers with no data of their own are left empty (never fabricated from a proxy alone).
+
+    Returns:
+        (prices for ``tickers`` with extended history, {ticker: [(proxy, from, to), ...]})
+    """
+    out: dict[str, pd.Series] = {}
+    notes: dict[str, list[tuple[str, pd.Timestamp, pd.Timestamp]]] = {}
+    for t in tickers:
+        s = prices[t].dropna() if t in prices.columns else pd.Series(dtype=float)
+        segs = []
+        for p in PROXIES.get(t, []):
+            if s.empty or p not in prices.columns:
+                continue
+            ps = prices[p].dropna()
+            first = s.index[0]
+            older = ps.loc[:first]
+            if len(older) < 2 or older.index[0] >= first:
+                continue
+            anchor = older.iloc[-1]
+            ext = older[older.index < first] * (s.iloc[0] / anchor)
+            if ext.empty:
+                continue
+            segs.append((p, ext.index[0], first))
+            s = pd.concat([ext, s])
+        out[t] = s
+        if segs:
+            notes[t] = segs
+    return pd.DataFrame(out).reindex(prices.index.union(pd.DataFrame(out).index)), notes
+
+
+def describe_proxies(notes: dict) -> list[str]:
+    """Human-readable lines such as 'VXUS: VEU 2007-03 -> 2011-01, VGTSX 1996-04 -> 2007-03'."""
+    return [f"{t}: " + ", ".join(f"{p} {a:%Y-%m} -> {b:%Y-%m}" for p, a, b in segs)
+            for t, segs in notes.items()]
 
 
 def generate_synthetic_prices(cfg: Config) -> tuple[pd.DataFrame, tuple[pd.Timestamp, pd.Timestamp]]:
@@ -1042,6 +1116,7 @@ def portfolio_stress(px: pd.DataFrame, weights: pd.Series, cfg: Config,
 # Named crises for the historical replay: (start, end) = market peak to trough, roughly.
 # Crises outside the holdings' common history are skipped automatically.
 CRISES: dict[str, tuple[str, str]] = {
+    "2000-02 dot-com crash": ("2000-03-24", "2002-10-09"),
     "2008 financial crisis": ("2007-10-09", "2009-03-09"),
     "2011 debt-ceiling crisis": ("2011-04-29", "2011-10-03"),
     "2015-16 China/oil slump": ("2015-05-21", "2016-02-11"),
@@ -1074,10 +1149,18 @@ def crisis_replay(px: pd.DataFrame, weights: pd.Series,
     rows, per_holding = [], {}
     for name, (start, end) in CRISES.items():
         s_ts, e_ts = pd.Timestamp(start), pd.Timestamp(end)
-        if s_ts < px.index[0] or e_ts > px.index[-1]:
+        if e_ts > px.index[-1] or e_ts <= px.index[0]:
             log.info("  Crisis replay: skipping %s (outside the holdings' common history from %s)",
                      name, px.index[0].date())
             continue
+        if s_ts < px.index[0]:
+            # Partly covered: keep it if at least half the crisis is inside the history.
+            if (e_ts - px.index[0]) < 0.5 * (e_ts - s_ts):
+                log.info("  Crisis replay: skipping %s (history from %s covers under half of it)",
+                         name, px.index[0].date())
+                continue
+            s_ts = px.index[0]
+            name = f"{name} (from {s_ts:%b %Y})"
         win = px.loc[s_ts:e_ts]
         if len(win) < 5:
             continue
@@ -1300,7 +1383,9 @@ def run_portfolio(cfg: Config, portfolio_path: Path, synthetic: bool,
     tickers = list(weights.index)
     if not synthetic:
         try:
-            prices = download_prices(cfg, tickers=tickers, cache_name="prices_cache_portfolio.csv")
+            extra = proxy_tickers(tickers) if cfg.use_proxies else []
+            prices = download_prices(cfg, tickers=tickers + extra,
+                                     cache_name="prices_cache_portfolio.csv")
         except DataDownloadError as exc:
             log.error("%s -> falling back to SYNTHETIC data", exc)
             synthetic = True
@@ -1309,6 +1394,12 @@ def run_portfolio(cfg: Config, portfolio_path: Path, synthetic: bool,
         syn_cfg = Config(universe={"Portfolio": tickers}, start=cfg.start, end=cfg.end,
                          seed=cfg.seed, market_ticker=cfg.market_ticker)
         prices, _ = generate_synthetic_prices(syn_cfg)
+    if cfg.use_proxies:
+        spliced, notes = splice_proxies(prices, tickers)
+        spliced[cfg.market_ticker] = prices[cfg.market_ticker]
+        prices = spliced
+        for line in describe_proxies(notes):
+            log.info("  Longer history via proxy: %s", line)
     px, weights = prepare_portfolio_prices(prices, weights, cfg)
     scen, hold, info = portfolio_stress(px, weights, cfg, crisis_date)
     replay, replay_hold = crisis_replay(px, weights, cfg)
@@ -1418,6 +1509,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="folder(s) or CSV files of candidate portfolios to compare side by side")
     p.add_argument("--portfolio", type=Path, default=None,
                    help="holdings CSV (ticker,weight): run the portfolio stress test instead")
+    p.add_argument("--no-proxies", action="store_true",
+                   help="portfolio/compare: use only each ETF's own history (no look-alike funds)")
     p.add_argument("--crisis-date", default=None,
                    help="portfolio test: use the window ending nearest this date as the crisis "
                         "(default: the most correlated window in the holdings' history)")
@@ -1444,7 +1537,8 @@ def main(argv: list[str] | None = None) -> int:
     defaults = UNIVERSE_DEFAULTS[args.universe]
     outdir = args.outdir if args.universe == "stocks" else args.outdir / args.universe
     cfg = Config(universe=dict(UNIVERSES[args.universe]), universe_name=args.universe,
-                 start=args.start or ("2004-01-01" if args.compare else str(defaults["start"])),
+                 start=args.start or ("1990-01-01" if (args.compare or args.portfolio)
+                                      else str(defaults["start"])),
                  end=args.end,
                  window=args.window, step=args.step,
                  threshold=args.threshold if args.threshold is not None else float(defaults["threshold"]),
@@ -1452,7 +1546,8 @@ def main(argv: list[str] | None = None) -> int:
                  z_mode=args.z_mode, z_lookback_days=args.z_lookback_days,
                  z_min_days=args.z_min_days,
                  outdir=outdir, cache_dir=args.cache_dir, refresh=args.refresh,
-                 make_gif=not args.no_gif, gif_stride=args.gif_stride, fps=args.fps)
+                 make_gif=not args.no_gif, gif_stride=args.gif_stride, fps=args.fps,
+                 use_proxies=not args.no_proxies)
     if cfg.window < 10 or cfg.step < 1:
         log.error("window must be >= 10 and step >= 1")
         return 2

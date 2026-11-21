@@ -91,7 +91,7 @@ volatility, not correlation.
       (worst 12m −30.9%, 24-month recovery). No mix was positive in any crisis; bonds cushioned
       fast crashes (COVID) far more than 2022. **Big caveat:** the window excludes 2000-02 and 2008,
       the two worst modern crashes, so all drops shown understate what is possible.
-- [ ] **S1+. Longer history via proxies:** splice older look-alike funds before an ETF existed
+- [~] **S1+. Longer history via proxies (built, awaiting real run):** splice older look-alike funds before an ETF existed
       (e.g. VXUS ← VEU/EFA, BND ← AGG) so comparisons include 2008 (and 2000-02 where possible)
 - [ ] **S2. Web app (Streamlit):** edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally
