@@ -91,8 +91,19 @@ volatility, not correlation.
       (worst 12m −30.9%, 24-month recovery). No mix was positive in any crisis; bonds cushioned
       fast crashes (COVID) far more than 2022. **Big caveat:** the window excludes 2000-02 and 2008,
       the two worst modern crashes, so all drops shown understate what is possible.
-- [~] **S1+. Longer history via proxies (built, awaiting real run):** splice older look-alike funds before an ETF existed
+- [x] **S1+. Longer history via proxies:** splice older look-alike funds before an ETF existed
       (e.g. VXUS ← VEU/EFA, BND ← AGG) so comparisons include 2008 (and 2000-02 where possible)
+      Real run from 2000-08 (all proxies worked): US stocks 8.1%/yr, worst −55.5%, 53-month
+      recovery | global 7.1%, −57.5% | 60/40 6.2%, −36.9% | stocks+bonds+gold 7.4%, −35.4%,
+      29 months | conservative 6.1%, −22.2% | tech heavy 8.1%, **−73.0%, 155-month recovery**.
+      Start date changes rankings drastically (tech: best in 2011+ view, worst risk here).
+      Robust across BOTH windows: bonds cut worst drops by about 1/3-1/2; stocks+bonds+gold beat 60/40
+      on reward vs pain. Period caveats: gold started near a multi-decade low in 2000; bonds
+      benefited from 40 years of falling rates.
+- [ ] **S1++. Rolling-window robustness:** results for every possible start date (e.g. all
+      10-year periods): range of outcomes, worst 10-year result, how often each mix came out ahead.
+      Directly tests start-date sensitivity
+- [ ] Polish: overlapping end labels on the growth chart; long crisis labels on the heatmap
 - [ ] **S2. Web app (Streamlit):** edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally
 - [ ] **S3. Daily report:** HTML page with value, daily and total P&L, actual vs target mix
