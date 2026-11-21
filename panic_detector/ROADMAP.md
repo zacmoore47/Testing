@@ -68,11 +68,30 @@ volatility, not correlation.
 - [ ] **3b. (Deprioritised) Honest backtest of a volatility-based de-risking rule** vs buy-and-hold: trading costs included,
       out-of-sample, explicit overfitting check
 
-## Phase 4: Make it run itself
+## Phase 4: Make it run itself (now part of S3/S4 above)
 - [ ] Scheduled daily run on the Mac
 - [ ] One-page daily summary (regime, weekly change, portfolio diversification health)
 - [ ] Alert only when something changes (flag flips, sharp correlation jump)
 
-## Open question
-Who is the tool for: personal investing, a portfolio/job project, or other users?
-The answer changes how much to invest in Phase 3/4 (e.g. a web dashboard for other users).
+## Decisions (Nov 2026)
+- **Who it's for:** personal investing. The user is building a first portfolio, investing from the **US** (USD, US-listed ETFs).
+- **Goal:** compare candidate portfolios → pick → track real holdings → daily report.
+- **Interface:** a small local web app (Streamlit) for entering portfolios and holdings.
+- **Updates:** via `git pull` (repo is public; project lives in `panic_detector/`).
+- **Not a goal:** telling the user what to buy. Phase 1 showed the regime does not predict
+  returns, so the tool shows trade-offs (growth vs bumpiness vs worst-case loss) and the user decides.
+
+## Portfolio app track (current priority, replaces the old Phase 4 ordering)
+- [ ] **S0. Setup:** project moved into `panic_detector/`; user clones repo and uses `git pull`
+- [ ] **S1. Compare mode:** long-run growth/vol/max drawdown, crisis replay per portfolio,
+      diversification today vs crisis, concentration; US ETF template portfolios; hindsight warning
+- [ ] **S2. Web app (Streamlit):** edit candidate portfolios in a table, run the comparison,
+      enter real holdings (shares, amount invested, target weight, cash), saved locally
+- [ ] **S3. Daily report:** HTML page with value, daily and total P&L, actual vs target mix
+      and rebalance flags, market regime, diversification health, crisis exposure, alerts
+      only on change; daily value history
+- [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification
+
+## Research track (later, optional)
+- Phase 2 combined correlation × volatility regime model
+- Phase 3b volatility-based de-risking backtest
