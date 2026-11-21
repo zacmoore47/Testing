@@ -23,6 +23,8 @@ Usage:
     python panic_detector.py --synthetic          # synthetic one-factor data + self-test
     python panic_detector.py --self-test          # run the self-test only
     python panic_detector.py --mst --window 120   # MST network, 120-day window
+    python panic_detector.py --start 2017-01-01   # longer history = panic flag live by 2020
+    python panic_detector.py --z-mode expanding   # original all-history panic baseline
     python panic_detector.py --help
 
 Outputs (in ./outputs/ by default):
@@ -124,8 +126,10 @@ class Config:
     mst: bool = False  # draw minimum spanning tree instead of threshold graph
     max_missing: float = 0.05  # drop tickers with more missing data than this
     ffill_limit: int = 5  # forward-fill at most this many consecutive missing days
-    z_threshold: float = 1.5  # panic flag: expanding z-score of avg_corr above this
-    z_min_days: int = 252  # expanding z-score needs this many trading days of history
+    z_threshold: float = 1.5  # panic flag: z-score of avg_corr above this
+    z_mode: str = "rolling"  # "rolling" (trailing baseline) or "expanding" (all history)
+    z_lookback_days: int = 504  # rolling baseline length in trading days (~2 years)
+    z_min_days: int = 252  # z-score needs this many trading days of history
     drawdown_shade: float = 0.10  # shade SPY drawdowns deeper than this
     seed: int = 42
     outdir: Path = Path("outputs")
@@ -145,8 +149,19 @@ class Config:
 
     @property
     def z_min_obs(self) -> int:
-        """Minimum observations of the *stepped* metric series for the expanding z-score."""
+        """Minimum observations of the *stepped* metric series for the z-score baseline."""
         return max(2, math.ceil(self.z_min_days / self.step))
+
+    @property
+    def z_lookback_obs(self) -> int:
+        """Rolling baseline length in observations of the stepped metric series."""
+        return max(self.z_min_obs, math.ceil(self.z_lookback_days / self.step))
+
+    @property
+    def z_label(self) -> str:
+        if self.z_mode == "rolling":
+            return f"rolling {self.z_lookback_days / 252:.0f}y"
+        return "expanding"
 
 
 class DataDownloadError(RuntimeError):
@@ -332,7 +347,7 @@ def compute_metrics(returns: pd.DataFrame, market: pd.Series, cfg: Config) -> tu
     """Compute rolling network metrics and the panic flag.
 
     Columns: avg_corr, top_eig, top_eig_share, mp_bound, n_edges, spy_drawdown,
-    plus avg_corr_z (expanding z-score) and panic (bool flag).
+    plus avg_corr_z (z-score vs. a trailing baseline) and panic (bool flag).
 
     Returns:
         (metrics DataFrame indexed by window end date, correlation stack (W, N, N)).
@@ -367,11 +382,30 @@ def compute_metrics(returns: pd.DataFrame, market: pd.Series, cfg: Config) -> tu
         index=pd.DatetimeIndex(dates, name="date"),
     )
 
-    # Panic flag: expanding z-score (uses data up to each date only).
-    exp = df["avg_corr"].expanding(min_periods=cfg.z_min_obs)
-    df["avg_corr_z"] = (df["avg_corr"] - exp.mean()) / exp.std()
+    # Panic flag: z-score of today's avg_corr against a baseline built only from PRIOR
+    # windows (no look-ahead, and the current value cannot dampen its own z-score).
+    base_mean, base_std = zscore_baseline(df["avg_corr"], cfg)
+    df["avg_corr_z"] = (df["avg_corr"] - base_mean) / base_std
     df["panic"] = df["avg_corr_z"] > cfg.z_threshold
     return df, corr
+
+
+def zscore_baseline(series: pd.Series, cfg: Config) -> tuple[pd.Series, pd.Series]:
+    """Mean and std of the panic-flag baseline at each date, using only earlier values.
+
+    rolling:   trailing ``cfg.z_lookback_days`` of history, so one extreme episode (e.g.
+               COVID) stops dominating the baseline once it has rolled out.
+    expanding: all history so far (COVID inflates the baseline permanently).
+    Both need ``cfg.z_min_days`` of history before producing a value.
+    """
+    prior = series.shift(1)
+    if cfg.z_mode == "rolling":
+        roll = prior.rolling(cfg.z_lookback_obs, min_periods=cfg.z_min_obs)
+    elif cfg.z_mode == "expanding":
+        roll = prior.expanding(min_periods=cfg.z_min_obs)
+    else:
+        raise ValueError(f"unknown z_mode {cfg.z_mode!r}")
+    return roll.mean(), roll.std()
 
 
 def check_regime_response(metrics: pd.DataFrame, stress: tuple[pd.Timestamp, pd.Timestamp],
@@ -575,14 +609,16 @@ def plot_tracking(metrics: pd.DataFrame, market: pd.Series, cfg: Config, path: P
     ax_px.set_yscale("log")
     ax_px.set_ylabel(f"{cfg.market_ticker} (log)", color=INK)
     ax_px.set_title(f"{cfg.market_ticker} price; grey = drawdown > {cfg.drawdown_shade:.0%}, "
-                    f"red = panic flag (expanding z > {cfg.z_threshold})",
+                    f"red = panic flag ({cfg.z_label} z > {cfg.z_threshold})",
                     fontsize=10, color=INK, loc="left")
 
     ax_c.plot(metrics.index, metrics["avg_corr"], color=LINE_MAIN, linewidth=2,
               label="Average pairwise correlation")
-    exp_mean = metrics["avg_corr"].expanding(min_periods=cfg.z_min_obs).mean()
-    ax_c.plot(metrics.index, exp_mean, color=INK_MUTED, linewidth=1.2, linestyle="--",
-              label="Expanding mean (no look-ahead)")
+    base_mean, base_std = zscore_baseline(metrics["avg_corr"], cfg)
+    ax_c.plot(metrics.index, base_mean, color=INK_MUTED, linewidth=1.2, linestyle="--",
+              label=f"Baseline mean ({cfg.z_label}, no look-ahead)")
+    ax_c.plot(metrics.index, base_mean + cfg.z_threshold * base_std, color=PANIC_SHADE,
+              linewidth=1.0, linestyle=":", label=f"Panic line (baseline + {cfg.z_threshold}σ)")
     ax_c.set_ylabel("Avg ρ", color=INK)
     ax_c.legend(frameon=False, fontsize=9, loc="upper left")
 
@@ -692,7 +728,13 @@ def run(cfg: Config, synthetic: bool) -> pd.DataFrame:
     log.info("Latest %s: avg ρ %.2f, λ1 %.1f (%.0f%%), MP bound %.2f, z %.2f, panic=%s",
              metrics.index[-1].date(), last.avg_corr, last.top_eig, 100 * last.top_eig_share,
              last.mp_bound, last.avg_corr_z, bool(last.panic))
-    log.info("Windows flagged as panic: %d of %d", int(metrics["panic"].sum()), len(metrics))
+    log.info("Windows flagged as panic (%s z > %.1f): %d of %d", cfg.z_label, cfg.z_threshold,
+             int(metrics["panic"].sum()), len(metrics))
+    for s, e in _runs(metrics["panic"]):
+        run_ = metrics.loc[s:e]
+        run_ = run_[run_["panic"]]
+        log.info("  panic period: %s -> %s (peak avg ρ %.2f)", s.date(),
+                 run_.index[-1].date(), run_["avg_corr"].max())
 
     log.info("Computing %d network layouts...", len(metrics))
     layouts = compute_layouts(corr, tickers, cfg.seed)
@@ -720,6 +762,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--threshold", type=float, default=0.5, help="edge threshold on correlation (default 0.5)")
     p.add_argument("--mst", action="store_true", help="draw the minimum spanning tree instead of a threshold graph")
     p.add_argument("--z-threshold", type=float, default=1.5, help="panic flag z-score threshold (default 1.5)")
+    p.add_argument("--z-mode", choices=["rolling", "expanding"], default="rolling",
+                   help="panic baseline: trailing window or all history (default rolling)")
+    p.add_argument("--z-lookback-days", type=int, default=504,
+                   help="rolling baseline length in trading days (default 504 = ~2 years)")
+    p.add_argument("--z-min-days", type=int, default=252,
+                   help="history needed before the panic flag can fire (default 252)")
     p.add_argument("--start", default="2019-01-01", help="start date (default 2019-01-01)")
     p.add_argument("--end", default=None, help="end date (default today)")
     p.add_argument("--synthetic", action="store_true", help="use synthetic one-factor data and run the self-test")
@@ -743,6 +791,8 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = Config(start=args.start, end=args.end, window=args.window, step=args.step,
                  threshold=args.threshold, mst=args.mst, z_threshold=args.z_threshold,
+                 z_mode=args.z_mode, z_lookback_days=args.z_lookback_days,
+                 z_min_days=args.z_min_days,
                  outdir=args.outdir, cache_dir=args.cache_dir, refresh=args.refresh,
                  make_gif=not args.no_gif, gif_stride=args.gif_stride, fps=args.fps)
     if cfg.window < 10 or cfg.step < 1:
