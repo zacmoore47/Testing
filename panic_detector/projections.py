@@ -26,6 +26,7 @@ import panic_detector as pdx
 log = logging.getLogger("panic_detector")
 
 PERCENTILES = (5, 10, 25, 50, 75, 90, 95)
+N_SAMPLES = 100  # individual scenarios kept for drawing
 
 
 @dataclass
@@ -91,8 +92,17 @@ def simulate(monthly_rets: pd.Series, plan: Plan) -> dict:
         "max_drawdown_p10": float(np.percentile(mdd, 10)),
         "history_months": n, "history_start": monthly_rets.index[0], "history_end": monthly_rets.index[-1],
         "hist_ann_return": float((1 + r).prod() ** (12 / n) - 1),
+        "ann_return_mean": float(ann.mean()),
+        "final_mean": float(final.mean()),
     }
-    return {"paths": paths, "summary": summary, "plan": plan}
+    # A random sample of individual scenarios to draw (quarterly points keep charts light).
+    pick = np.random.default_rng(plan.seed + 1).choice(plan.sims, size=min(N_SAMPLES, plan.sims),
+                                                       replace=False)
+    q = np.arange(2, months, 3)
+    samples = pd.DataFrame(wealth[np.ix_(pick, q)].T, columns=[f"s{i}" for i in range(len(pick))])
+    samples.insert(0, "year", (q + 1) / 12)
+    return {"paths": paths, "summary": summary, "plan": plan, "samples": samples,
+            "ann": ann, "final": final}
 
 
 def milestones(paths: pd.DataFrame, years: tuple[int, ...] = (5, 10, 15, 20, 30, 40)) -> pd.DataFrame:
@@ -117,3 +127,44 @@ def project(weights: pd.Series, plan: Plan, cfg: pdx.Config, synthetic: bool = F
              rets.index[0].date(), rets.index[-1].date(), out["summary"]["final"][50],
              out["summary"]["final"][10])
     return out
+
+
+def project_many(portfolios: dict[str, pd.Series], plan: Plan, cfg: pdx.Config,
+                 synthetic: bool = False) -> dict:
+    """Same plan for several portfolios, through the SAME simulated scenarios.
+
+    Monthly returns are aligned on the months every portfolio has, and every portfolio uses
+    the same random draw of historical 12-month stretches, so differences between results
+    come from the mixes themselves, not from luck in the draw.
+    """
+    tickers = sorted({t for w in portfolios.values() for t in w.index})
+    prices, notes = hs.long_prices(tickers, cfg, "prices_cache_projection.csv", synthetic)
+    rets, used = {}, {}
+    for name, w in portfolios.items():
+        values, used[name] = hs.portfolio_values(prices, w, cfg)
+        rets[name] = hs.monthly_returns(values)
+    aligned = pd.DataFrame(rets).dropna()
+    if len(aligned) < plan.block * 3:
+        raise ValueError("the portfolios share too little common history to compare")
+    results = {name: simulate(aligned[name], plan) for name in portfolios}
+    for name, res in results.items():
+        res["weights"] = used[name]
+    log.info("Projection of %d portfolios through the same %d scenarios (%s to %s)",
+             len(portfolios), plan.sims, aligned.index[0].date(), aligned.index[-1].date())
+    return {"results": results, "plan": plan, "proxy_lines": notes, "synthetic": synthetic,
+            "start": aligned.index[0], "end": aligned.index[-1], "months": len(aligned)}
+
+
+def comparison_table(many: dict) -> pd.DataFrame:
+    rows = []
+    for name, res in many["results"].items():
+        s = res["summary"]
+        rows.append({"portfolio": name, "mean_ret": 100 * s["ann_return_mean"],
+                     "median_ret": 100 * s["ann_return"][50], "bad_ret": 100 * s["ann_return"][10],
+                     "good_ret": 100 * s["ann_return"][90], "final_mean": s["final_mean"],
+                     "final_median": s["final"][50], "final_bad": s["final"][10],
+                     "final_good": s["final"][90], "p_below": 100 * s["p_below_contributed"],
+                     "p_goal": None if s["p_goal"] is None else 100 * s["p_goal"],
+                     "mdd_median": 100 * s["max_drawdown_median"],
+                     "contributed": s["contributed"]})
+    return pd.DataFrame(rows)

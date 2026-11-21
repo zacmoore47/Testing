@@ -692,19 +692,36 @@ def weights_caption(w: pd.Series, basis: str) -> None:
 
 def page_projections() -> None:
     header("Planning", "Projections",
-           "What regular investing could grow to, as a range. Futures are built from random "
-           "12-month stretches of this portfolio's actual history (back to the 1990s–2000s, "
-           "depending on its funds), thousands of times.")
+           "Simulate thousands of possible futures for one or more portfolios. Each future is "
+           "stitched together from random 12-month stretches of real history, and every "
+           "portfolio goes through the same scenarios, so the comparison is fair.")
     sources = portfolio_sources()
-    if not sources:
-        note("Create an allocation on the Compare page first.")
-        return
+    section("Portfolios")
+    chosen = st.multiselect("Saved portfolios (up to 6)", list(sources),
+                            default=list(sources)[:3], max_selections=6)
+    with st.expander("Custom mix (optional)"):
+        cname = st.text_input("Name", value="custom mix")
+        cdf = st.data_editor(pd.DataFrame({"ticker": ["VTI", "VXUS", "BND"], "weight": [50.0, 20.0, 30.0]}),
+                             num_rows="dynamic", width="stretch", key="proj_custom",
+                             column_config={"ticker": st.column_config.TextColumn("Ticker"),
+                                            "weight": st.column_config.NumberColumn("Weight %", min_value=0.0,
+                                                                                    format="%.1f")})
+        use_custom = st.checkbox("Include this mix", value=False)
+        if st.button("Save as allocation", disabled=not cname.strip()):
+            cw = clean_weights(cdf)
+            if cw.empty:
+                st.error("Add at least one ticker with a weight.")
+            else:
+                write_weights(cw, CAND_DIR / f"{len(candidate_files()) + 1}_{slug(cname)}.csv")
+                st.toast("Saved. It now appears in the list above and on the Compare page.")
+                st.rerun()
+
     section("Plan")
-    c = st.columns([1.6, 1, 1, 1], gap="medium")
-    src = c[0].selectbox("Portfolio", list(sources))
-    initial = c[1].number_input("Starting amount ($)", min_value=0.0, value=10_000.0, step=1000.0)
-    monthly = c[2].number_input("Added every month ($)", min_value=0.0, value=500.0, step=50.0)
-    years = c[3].slider("Years", 1, 40, 20)
+    c = st.columns([1, 1, 1, 1], gap="medium")
+    initial = c[0].number_input("Starting amount ($)", min_value=0.0, value=10_000.0, step=1000.0)
+    monthly = c[1].number_input("Added every month ($)", min_value=0.0, value=500.0, step=50.0)
+    years = c[2].slider("Years", 1, 40, 20)
+    goal = c[3].number_input("Goal ($, optional)", min_value=0.0, value=0.0, step=10_000.0)
     c = st.columns([1, 1, 1, 1], gap="medium")
     real = c[0].toggle("Today's dollars", value=True,
                        help="Removes inflation so amounts are in today's purchasing power.")
@@ -712,72 +729,100 @@ def page_projections() -> None:
     fee = c[2].number_input("Fund fees %/yr", 0.0, 2.0, 0.05, 0.01,
                             help="Weighted expense ratio; most broad index ETFs are 0.03–0.10%.")
     adjust = c[3].number_input("Pessimism %/yr", 0.0, 5.0, 0.0, 0.25,
-                               help="Subtract this from every year's return. 2000–2026 was a "
-                                    "strong period for US stocks and bonds; 1–2% is a common "
-                                    "cautious adjustment.")
-    goal = st.number_input("Optional goal ($)", min_value=0.0, value=0.0, step=10_000.0)
-    if st.button("Run projection", type="primary"):
-        kind, path = sources[src]
-        with st.spinner("Downloading history and simulating 5,000 futures"):
+                               help="Subtract this from every year's return. The history used "
+                                    "was strong for US stocks and bonds; 1–2% is a cautious setting.")
+    if st.button("Run simulations", type="primary", disabled=not (chosen or use_custom)):
+        with st.spinner("Downloading history and simulating 5,000 futures per portfolio"):
             try:
-                w, basis = weights_for(kind, path)
+                ports, bases = {}, {}
+                for src in chosen:
+                    kind, path = sources[src]
+                    ports[src.split(" · ", 1)[1]], bases[src.split(" · ", 1)[1]] = weights_for(kind, path)
+                if use_custom:
+                    cw = clean_weights(cdf)
+                    if not cw.empty:
+                        ports[cname or "custom mix"] = pd.Series(cw["weight"].to_numpy(),
+                                                                 index=cw["ticker"]) / cw["weight"].sum()
+                        bases[cname or "custom mix"] = "custom weights"
                 plan = pj.Plan(initial=initial, monthly=monthly, years=years, fee_pct=fee,
-                               adjust_pct=adjust, inflation_pct=infl, real=real,
-                               goal=goal or None)
-                res = pj.project(w, plan, make_cfg(), synthetic=demo)
-                res["basis"] = basis
-                st.session_state["projection"] = res
+                               adjust_pct=adjust, inflation_pct=infl, real=real, goal=goal or None)
+                many = pj.project_many(ports, plan, make_cfg(), synthetic=demo)
+                many["bases"] = bases
+                st.session_state["projection_many"] = many
             except Exception as exc:
-                st.error(f"Projection failed: {exc}")
-    res = st.session_state.get("projection")
-    if res:
-        show_projection(res)
+                st.error(f"Simulation failed: {exc}")
+    many = st.session_state.get("projection_many")
+    if many:
+        show_projections(many)
 
 
-def show_projection(res: dict) -> None:
-    s, plan, paths = res["summary"], res["plan"], res["paths"]
-    section("Result")
-    if res["synthetic"]:
+def show_projections(many: dict) -> None:
+    plan, results = many["plan"], many["results"]
+    names = list(results)
+    section("Results")
+    if many["synthetic"]:
         flag("Synthetic prices: results are illustrative only.", negative=True)
-    weights_caption(res["weights"], res["basis"])
-    st.markdown(f"<div class='meta'>HISTORY {s['history_start']:%Y-%m} → {s['history_end']:%Y-%m} "
-                f"({s['history_months']} MONTHS, {100 * s['hist_ann_return']:.1f}%/YR) · "
-                f"{plan.sims:,} SIMULATIONS · {'REAL (TODAY’S $)' if plan.real else 'NOMINAL $'} · "
-                f"FEES {plan.fee_pct:.2f}% · PESSIMISM {plan.adjust_pct:.2f}%</div>",
-                unsafe_allow_html=True)
-    f = s["final"]
+    st.markdown(f"<div class='meta'>{plan.sims:,} SCENARIOS PER PORTFOLIO · SAME SCENARIOS FOR ALL · "
+                f"HISTORY {many['start']:%Y-%m} → {many['end']:%Y-%m} ({many['months']} MONTHS) · "
+                f"{plan.years} YEARS · {'TODAY’S $' if plan.real else 'NOMINAL $'} · FEES "
+                f"{plan.fee_pct:.2f}% · PESSIMISM {plan.adjust_pct:.2f}%</div>", unsafe_allow_html=True)
+    t = pj.comparison_table(many)
+    contributed = float(t["contributed"].iloc[0])
+    st.markdown(f"<div class='meta'>CONTRIBUTED OVER {plan.years} YEARS: {fmt_money(contributed)}"
+                "</div>", unsafe_allow_html=True)
+    cols = {"Portfolio": t["portfolio"], "Average return /yr": t["mean_ret"],
+            "Typical (median) /yr": t["median_ret"], "Bad case /yr": t["bad_ret"],
+            "Good case /yr": t["good_ret"], "Average final $": t["final_mean"],
+            "Median final $": t["final_median"], "Bad case $": t["final_bad"],
+            "Good case $": t["final_good"], "P(below contributed)": t["p_below"],
+            "Typical worst drop": t["mdd_median"]}
+    if plan.goal:
+        cols[f"P(reach {fmt_money(plan.goal)})"] = t["p_goal"]
+    st.dataframe(pd.DataFrame(cols), hide_index=True, width="stretch", column_config={
+        "Average return /yr": PCT, "Typical (median) /yr": PCT, "Bad case /yr": PCT,
+        "Good case /yr": PCT, "Average final $": USD, "Median final $": USD, "Bad case $": USD,
+        "Good case $": USD, "P(below contributed)": st.column_config.NumberColumn(format="%.0f%%"),
+        "Typical worst drop": PCT,
+        f"P(reach {fmt_money(plan.goal)})": st.column_config.NumberColumn(format="%.0f%%")})
+    note("Average = mean over all scenarios; it is pulled up by a few very lucky futures, so the "
+         "average final $ is above the median. Median = what a typical scenario got; plan around "
+         "the median and the bad case (10th percentile: 1 in 10 scenarios did worse).")
+    a, b = st.columns([1.4, 1], gap="large")
+    with a:
+        st.markdown("<div class='meta'>MEDIAN (SOLID) AND BAD CASE (DASHED) · GREY = CONTRIBUTED"
+                    "</div>", unsafe_allow_html=True)
+        chart(ch.median_compare(results, names))
+    with b:
+        st.markdown("<div class='meta'>SPREAD OF RETURNS ACROSS ALL SCENARIOS · DASHED = AVERAGE"
+                    "</div>", unsafe_allow_html=True)
+        chart(ch.return_distribution({n: results[n]["ann"] for n in names}, names))
+
+    section("Scenarios · one portfolio")
+    pick = st.selectbox("Show scenarios for", names)
+    res = results[pick]
+    weights_caption(res["weights"], many["bases"].get(pick, "weights"))
+    s = res["summary"]
     m = st.columns(5)
-    m[0].metric("Contributed", fmt_money(s["contributed"]))
-    m[1].metric("Bad case (10th pct)", fmt_money(f[10]))
-    m[2].metric("Median", fmt_money(f[50]))
-    m[3].metric("Good case (90th pct)", fmt_money(f[90]))
-    m[4].metric("P(below contributed)", f"{100 * s['p_below_contributed']:.0f}%")
-    if s["p_goal"] is not None:
-        st.markdown(f"<div class='meta'>CHANCE OF REACHING {fmt_money(plan.goal)}: "
-                    f"{100 * s['p_goal']:.0f}%</div>", unsafe_allow_html=True)
+    m[0].metric("Average return /yr", fmt_pct(100 * s["ann_return_mean"], False))
+    m[1].metric("Typical (median) /yr", fmt_pct(100 * s["ann_return"][50], False))
+    m[2].metric("Bad case $ (10th)", fmt_money(s["final"][10]))
+    m[3].metric("Median $", fmt_money(s["final"][50]))
+    m[4].metric("Good case $ (90th)", fmt_money(s["final"][90]))
     a, b = st.columns([1.6, 1], gap="large")
     with a:
-        st.markdown("<div class='meta'>VALUE OVER TIME · BANDS 10–90% AND 25–75% · DASHED = "
-                    "CONTRIBUTED</div>", unsafe_allow_html=True)
-        chart(ch.fan_chart(paths, plan.goal))
+        st.markdown(f"<div class='meta'>{len(res['samples'].columns) - 1} OF {plan.sims:,} SIMULATED "
+                    "FUTURES (FAINT) · MEDIAN, 10TH AND 90TH PERCENTILE</div>", unsafe_allow_html=True)
+        chart(ch.scenario_paths(res["samples"], res["paths"]))
     with b:
-        ms = pj.milestones(paths)
+        ms = pj.milestones(res["paths"])
         st.markdown("<div class='meta'>MILESTONES</div>", unsafe_allow_html=True)
         st.dataframe(pd.DataFrame({
             "Year": ms["year"].round(0).astype(int), "Contributed": ms["contributed"],
             "Bad (10th)": ms["p10"], "Median": ms["p50"], "Good (90th)": ms["p90"]}),
             hide_index=True, width="stretch", column_config={
                 "Contributed": USD, "Bad (10th)": USD, "Median": USD, "Good (90th)": USD})
-        ar = s["ann_return"]
-        st.dataframe(pd.DataFrame({
-            "Measure": ["Return per year · bad (10th)", "Return per year · median",
-                        "Return per year · good (90th)", "Worst drop along the way · median",
-                        "Worst drop along the way · bad (10th)"],
-            "Value": [100 * ar[10], 100 * ar[50], 100 * ar[90], 100 * s["max_drawdown_median"],
-                      100 * s["max_drawdown_p10"]]}), hide_index=True, width="stretch",
-            column_config={"Value": st.column_config.NumberColumn(format="%+.1f%%")})
-    note("A range, not a forecast: it assumes the future resembles shuffled pieces of 2000–today. "
-         "It cannot include shocks worse than any seen in that period. Use the pessimism setting "
+    note("A range, not a forecast: futures are reshuffled pieces of the historical window shown "
+         "above, so shocks worse than any in that window cannot appear. Use the pessimism setting "
          "to stress the plan. Not financial advice.")
 
 

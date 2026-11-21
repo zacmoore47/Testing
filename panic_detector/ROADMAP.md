@@ -127,6 +127,10 @@ volatility, not correlation.
       monthly returns; fees, inflation (today's $), pessimism adjustment, goal probability;
       fan chart + milestones. Validated: constant return = savings formula exactly; bootstrap
       median matches history within ~0.1%/yr (a non-circular version was biased and replaced)
+- [x] **Projections v2:** up to 6 portfolios (saved or a custom mix typed on the page) run
+      through the SAME 5,000 scenarios (common history, common random draws); average vs
+      median return, bad/good cases, P(below contributed), P(goal); individual scenario
+      paths, median comparison and return-distribution charts
 - [x] **Hedge finder page:** 14 common hedge ETFs + user tickers; return in the portfolio's
       worst 5% weeks, correlation, rise in crises where the portfolio lost, and the effect of
       holding X% (worst drop, volatility, growth cost); verdicts Hedge / Diversifier / No help

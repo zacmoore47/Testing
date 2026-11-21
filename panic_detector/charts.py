@@ -277,3 +277,69 @@ def hedge_scatter(table: pd.DataFrame) -> alt.TopLevelMixin:
     zero_x = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color=AXIS).encode(x="z:Q")
     zero_y = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color=AXIS).encode(y="z:Q")
     return style(alt.layer(zero_x, zero_y, pts, labels), 340)
+
+
+def scenario_paths(samples: pd.DataFrame, paths: pd.DataFrame) -> alt.TopLevelMixin:
+    """Individual simulated futures (thin lines) with median, 10th/90th and contributed."""
+    long = samples.melt("year", var_name="scenario", value_name="value")
+    x = alt.X("year:Q", title="Years from now", axis=alt.Axis(format=".0f", tickMinStep=1))
+    top = float(paths["p95"].max()) * 1.05  # rare extreme futures run off the top
+    lines = alt.Chart(long).mark_line(strokeWidth=0.7, opacity=0.18, color=BLUE, clip=True).encode(
+        x=x, y=alt.Y("value:Q", title="Portfolio value ($)", axis=alt.Axis(format="$,.0f"),
+                     scale=alt.Scale(domain=[0, top])),
+        detail="scenario:N")
+    p = paths.melt("year", value_vars=["p10", "p50", "p90", "contributed"], var_name="line",
+                   value_name="value").replace({"line": {"p10": "Bad case (10th)", "p50": "Median",
+                                                          "p90": "Good case (90th)",
+                                                          "contributed": "Contributed"}})
+    order = ["Good case (90th)", "Median", "Bad case (10th)", "Contributed"]
+    summary = alt.Chart(p).mark_line(strokeWidth=2, clip=True).encode(
+        x=x, y="value:Q",
+        color=alt.Color("line:N", sort=order, scale=alt.Scale(domain=order,
+                        range=["#1baf7a", INK, RED, GREY]), legend=alt.Legend(title=None)),
+        strokeDash=alt.StrokeDash("line:N", sort=order, legend=None,
+                                  scale=alt.Scale(domain=order, range=[[1, 0], [1, 0], [1, 0], [4, 3]])),
+        tooltip=[alt.Tooltip("line:N", title="Line"), alt.Tooltip("year:Q", format=".1f"),
+                 alt.Tooltip("value:Q", format="$,.0f")])
+    return style(alt.layer(lines, summary), 380)
+
+
+def median_compare(results: dict[str, dict], names: list[str]) -> alt.TopLevelMixin:
+    """Median (solid) and bad case (dashed) for several portfolios on one chart."""
+    rows = []
+    for n in names:
+        p = results[n]["paths"]
+        rows.append(pd.DataFrame({"year": p["year"], "portfolio": n, "case": "Median", "value": p["p50"]}))
+        rows.append(pd.DataFrame({"year": p["year"], "portfolio": n, "case": "Bad case (10th)",
+                                  "value": p["p10"]}))
+    df = pd.concat(rows)
+    df = df[np.isclose((df["year"] * 12) % 3, 0)]  # quarterly points
+    contrib = results[names[0]]["paths"][["year", "contributed"]]
+    ch = alt.Chart(df).mark_line(strokeWidth=1.8).encode(
+        x=alt.X("year:Q", title="Years from now", axis=alt.Axis(format=".0f", tickMinStep=1)),
+        y=alt.Y("value:Q", title="Portfolio value ($)", axis=alt.Axis(format="$,.0f")),
+        color=alt.Color("portfolio:N", scale=_palette(names), legend=alt.Legend(title=None)),
+        strokeDash=alt.StrokeDash("case:N", scale=alt.Scale(domain=["Median", "Bad case (10th)"],
+                                                            range=[[1, 0], [5, 3]]), legend=None),
+        tooltip=[alt.Tooltip("portfolio:N"), alt.Tooltip("case:N"),
+                 alt.Tooltip("year:Q", format=".1f"), alt.Tooltip("value:Q", format="$,.0f")])
+    c = alt.Chart(contrib).mark_line(color=GREY, strokeDash=[2, 2], strokeWidth=1).encode(
+        x="year:Q", y="contributed:Q")
+    return style(alt.layer(c, ch), 360)
+
+
+def return_distribution(ann: dict[str, np.ndarray], names: list[str]) -> alt.TopLevelMixin:
+    """Spread of annualised returns across all simulated scenarios, per portfolio."""
+    df = pd.concat([pd.DataFrame({"portfolio": n, "ret": 100 * np.asarray(ann[n])}) for n in names])
+    means = df.groupby("portfolio", as_index=False)["ret"].mean()
+    dens = alt.Chart(df).transform_density("ret", groupby=["portfolio"], as_=["ret", "density"],
+                                           steps=160).mark_line(strokeWidth=1.8).encode(
+        x=alt.X("ret:Q", title="Return per year over the whole period (%)", axis=alt.Axis(format=".0f")),
+        y=alt.Y("density:Q", title="Share of scenarios", axis=alt.Axis(labels=False, ticks=False)),
+        color=alt.Color("portfolio:N", scale=_palette(names),
+                        legend=alt.Legend(title=None, columns=min(len(names), 2))))
+    mean_rules = alt.Chart(means).mark_rule(strokeDash=[3, 3], strokeWidth=1.2).encode(
+        x="ret:Q", color=alt.Color("portfolio:N", scale=_palette(names), legend=None),
+        tooltip=[alt.Tooltip("portfolio:N"), alt.Tooltip("ret:Q", title="Average %/yr", format=".1f")])
+    zero = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color=AXIS).encode(x="z:Q")
+    return style(alt.layer(zero, dens, mean_rules), 300)
