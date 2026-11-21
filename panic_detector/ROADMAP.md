@@ -100,9 +100,15 @@ volatility, not correlation.
       Robust across BOTH windows: bonds cut worst drops by about 1/3-1/2; stocks+bonds+gold beat 60/40
       on reward vs pain. Period caveats: gold started near a multi-decade low in 2000; bonds
       benefited from 40 years of falling rates.
-- [~] **S1++. Rolling-window robustness (built, awaiting real run):** `rolling.png`, `rolling_summary.csv`; results for every possible start date (e.g. all
+- [x] **S1++. Rolling-window robustness:** `rolling.png`, `rolling_summary.csv`; results for every possible start date (e.g. all
       10-year periods): range of outcomes, worst 10-year result, how often each mix came out ahead.
       Directly tests start-date sensitivity
+      Real run (start months 2000-08 → 2016-11 for 10y; ~3 truly separate decades):
+      10-year worst / typical %/yr: US stocks −1.1 / 10.6 | global +0.7 / 8.7 | 60/40 +3.4 / 6.8 |
+      **stocks+bonds+gold +4.9 / 8.1 (best worst-case of all six)** | conservative +3.9 / 6.6 |
+      tech heavy −5.6 / 14.4 (came 1st in 87% of start months, but that is mostly one era, 2009-2021).
+      5-year worst: SBG +1.3, conservative +2.8, 60/40 −0.7, US −6.3, tech −12.5 %/yr.
+      No mix containing bonds lost money over any 5- or 10-year period since 2000.
 - [x] Polish: overlapping end labels on the growth chart; long crisis labels on the heatmap
 - [ ] **S2. Web app (Streamlit):** edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally
