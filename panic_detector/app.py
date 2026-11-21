@@ -1,5 +1,5 @@
 """
-app.py - Portfolio Lab: a small local web app around the panic detector.
+app.py - Portfolio Lab: a local web app around the panic detector.
 
 Start it from the panic_detector folder:
     streamlit run app.py
@@ -7,8 +7,9 @@ It opens in your browser at http://localhost:8501. Everything stays on your comp
 portfolios are saved as CSV files in portfolios/, results in outputs/.
 
 Pages:
-    Compare portfolios - create/edit candidate mixes and compare them side by side
-    My portfolio       - enter what you actually own, value it, and stress-test it
+    Compare       create/edit candidate mixes and compare them side by side
+    Portfolio     enter what you actually own, value it, and stress-test it
+    Daily report  one-page report with alerts for what changed
 """
 from __future__ import annotations
 
@@ -18,9 +19,9 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-
 import streamlit.components.v1 as components
 
+import charts as ch
 import compare
 import holdings as hd
 import panic_detector as pdx
@@ -29,19 +30,85 @@ import report as rp
 BASE = Path(__file__).resolve().parent
 CAND_DIR = BASE / "portfolios" / "candidates"
 MY_DIR = BASE / "portfolios" / "my"
-NEW = "➕ New portfolio"
+NEW = "New portfolio"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(message)s",
                     datefmt="%H:%M:%S")
 for noisy in ("matplotlib", "PIL", "yfinance", "peewee", "urllib3"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 
-st.set_page_config(page_title="Portfolio Lab", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Portfolio Lab", page_icon="▦", layout="wide")
+
+CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+:root { --ink:#1a1a1a; --muted:#6b6b6b; --line:#e3e3df; --accent:#2a78d6; --pos:#0f7b3f; --neg:#c62f2e; }
+html, body, .stApp, .stMarkdown, p, label, input, textarea, button, li { font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif; }
+.stApp { background:#fbfbfa; }
+header[data-testid="stHeader"] { background:transparent; height:0; }
+.block-container { padding-top:2.0rem; padding-bottom:3rem; max-width:1320px; }
+h1 { font-size:1.55rem !important; font-weight:600 !important; letter-spacing:-0.01em; margin:0 !important; padding:0 !important; }
+h2, h3 { font-weight:600 !important; letter-spacing:-0.01em; }
+section[data-testid="stSidebar"] { background:#f3f3f1; border-right:1px solid var(--line); }
+section[data-testid="stSidebar"] .block-container { padding-top:1.2rem; }
+.wordmark { font-family:'IBM Plex Mono', monospace; font-weight:500; font-size:0.95rem; letter-spacing:0.14em; color:var(--ink); }
+.wordmark span { color:var(--accent); }
+.eyebrow { font-family:'IBM Plex Mono', monospace; text-transform:uppercase; letter-spacing:0.14em; font-size:0.68rem; color:var(--accent); margin-bottom:4px; }
+.lede { color:var(--muted); font-size:0.92rem; margin:6px 0 4px; max-width:820px; }
+.section { font-family:'IBM Plex Mono', monospace; text-transform:uppercase; letter-spacing:0.12em; font-size:0.68rem; color:var(--muted);
+           border-bottom:1px solid var(--line); padding-bottom:6px; margin:30px 0 14px; }
+.meta { font-family:'IBM Plex Mono', monospace; font-size:0.74rem; color:var(--muted); letter-spacing:0.04em; margin:6px 0 2px; }
+.note { font-size:0.8rem; color:var(--muted); border-left:2px solid var(--line); padding:2px 0 2px 10px; margin:8px 0 14px; max-width:980px; }
+.flag { font-size:0.85rem; border-left:2px solid #a86b00; background:#fff8ec; padding:8px 12px; margin:8px 0; }
+.flag.neg { border-left-color:var(--neg); background:#fdf1f1; }
+[data-testid="stMetric"] { background:#ffffff; border:1px solid var(--line); border-radius:3px; padding:10px 14px; }
+[data-testid="stMetricLabel"] p { text-transform:uppercase; letter-spacing:0.08em; font-size:0.66rem !important; color:var(--muted); }
+[data-testid="stMetricValue"] { font-family:'IBM Plex Mono', monospace; font-size:1.35rem !important; font-weight:500; }
+[data-testid="stMetricDelta"] { font-family:'IBM Plex Mono', monospace; font-size:0.75rem !important; }
+.stButton button, .stDownloadButton button { border-radius:3px; font-weight:500; letter-spacing:0.01em; }
+div[data-baseweb="select"] > div, .stTextInput input, .stNumberInput input { border-radius:3px; }
+.stTabs [data-baseweb="tab-list"] { gap:20px; border-bottom:1px solid var(--line); }
+.stTabs button[role="tab"] p, .stTabs [data-baseweb="tab"] p { font-family:'IBM Plex Mono', monospace !important; text-transform:uppercase; letter-spacing:0.1em; font-size:0.72rem !important; }
+[data-testid="stDataFrame"], [data-testid="stDataEditor"] { border:1px solid var(--line); border-radius:3px; }
+.stRadio [role="radiogroup"] label p { font-size:0.9rem; }
+</style>
+"""
+st.markdown(CSS, unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------------------
-# Helpers
+# Small UI helpers
 # ---------------------------------------------------------------------------------------
+
+
+def header(eyebrow: str, title: str, lede: str) -> None:
+    st.markdown(f"<div class='eyebrow'>{eyebrow}</div>", unsafe_allow_html=True)
+    st.title(title)
+    st.markdown(f"<div class='lede'>{lede}</div>", unsafe_allow_html=True)
+
+
+def section(label: str) -> None:
+    st.markdown(f"<div class='section'>{label}</div>", unsafe_allow_html=True)
+
+
+def note(text: str) -> None:
+    st.markdown(f"<div class='note'>{text}</div>", unsafe_allow_html=True)
+
+
+def flag(text: str, negative: bool = False) -> None:
+    st.markdown(f"<div class='flag{' neg' if negative else ''}'>{text}</div>",
+                unsafe_allow_html=True)
+
+
+def chart(c) -> None:
+    st.altair_chart(c, theme=None, width="stretch")
+
+
+PCT = st.column_config.NumberColumn(format="%.1f%%")
+SPCT = st.column_config.NumberColumn(format="%+.1f%%")
+USD = st.column_config.NumberColumn(format="$%,.0f")
+SUSD = st.column_config.NumberColumn(format="%+,.0f")
+NUM1 = st.column_config.NumberColumn(format="%.1f")
 
 
 def make_cfg(use_proxies: bool = True) -> pdx.Config:
@@ -78,20 +145,7 @@ def clean_weights(df: pd.DataFrame) -> pd.DataFrame:
                                                                   sort=False).sum()
 
 
-def pct(x: float, signed: bool = False) -> str:
-    if pd.isna(x):
-        return "n/a"
-    return f"{x:+.1f}%" if signed else f"{x:.1f}%"
-
-
-def money(x: float, signed: bool = False) -> str:
-    if pd.isna(x):
-        return "n/a"
-    return f"{'+' if signed and x >= 0 else ''}{'-' if x < 0 else ''}${abs(x):,.0f}"
-
-
 def editor_key(name: str) -> str:
-    """A per-portfolio editor key with a version, so 'reset/load' can refresh the table."""
     v = st.session_state.setdefault(f"ver_{name}", 0)
     return f"editor_{name}_{v}"
 
@@ -100,63 +154,78 @@ def bump(name: str) -> None:
     st.session_state[f"ver_{name}"] = st.session_state.get(f"ver_{name}", 0) + 1
 
 
+def fmt_money(x: float, signed: bool = False) -> str:
+    if pd.isna(x):
+        return "n/a"
+    return f"{'+' if signed and x >= 0 else ''}{'-' if x < 0 else ''}${abs(x):,.0f}"
+
+
+def fmt_pct(x: float, signed: bool = True) -> str:
+    return "n/a" if pd.isna(x) else (f"{x:+.1f}%" if signed else f"{x:.1f}%")
+
+
 # ---------------------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------------------
 
-st.sidebar.title("📈 Portfolio Lab")
-page = st.sidebar.radio("Page", ["Compare portfolios", "My portfolio", "Daily report"])
-st.sidebar.divider()
-demo = st.sidebar.toggle("Demo mode (made-up prices)", value=False,
-                         help="Uses synthetic prices instead of Yahoo Finance. Only for "
-                              "trying the app without internet. Numbers are meaningless.")
-if demo:
-    st.sidebar.warning("Demo mode is ON: all numbers are made up.")
-st.sidebar.caption("Everything runs and is saved on this computer. This tool shows trade-offs "
-                   "from past data; it is not financial advice and does not predict returns.")
+with st.sidebar:
+    st.markdown("<div class='wordmark'>PORTFOLIO<span>/</span>LAB</div>", unsafe_allow_html=True)
+    st.markdown("<div class='meta'>Correlation · risk · robustness</div>", unsafe_allow_html=True)
+    st.markdown("<div class='section'>Navigate</div>", unsafe_allow_html=True)
+    page = st.radio("Page", ["Compare", "Portfolio", "Daily report"],
+                    label_visibility="collapsed")
+    st.markdown("<div class='section'>Data</div>", unsafe_allow_html=True)
+    demo = st.toggle("Synthetic prices (demo)", value=False,
+                     help="Uses made-up prices instead of Yahoo Finance, for trying the app "
+                          "offline. All numbers are then meaningless.")
+    if demo:
+        flag("Synthetic prices: results are illustrative only.", negative=True)
+    st.markdown("<div class='note'>Runs locally. Based on historical prices; describes "
+                "risk and trade-offs, does not predict returns. Not financial advice.</div>",
+                unsafe_allow_html=True)
 
 
 # ---------------------------------------------------------------------------------------
-# Page: Compare portfolios
+# Page: Compare
 # ---------------------------------------------------------------------------------------
 
 
 def page_compare() -> None:
-    st.title("Compare portfolios")
-    st.write("Build a few candidate mixes, then compare growth, worst drops, crisis results "
-             "and how robust each one was to the timing of when you started.")
+    header("Research", "Portfolio comparison",
+           "Define candidate allocations and compare growth, drawdowns, crisis behaviour and "
+           "sensitivity to start date over a common historical window.")
 
     files = candidate_files()
-    st.subheader("1. Your candidate portfolios")
-    left, right = st.columns([1, 1.3])
+    section("Candidate allocations")
+    left, right = st.columns([1.15, 1], gap="large")
     with left:
-        choice = st.selectbox("Edit a portfolio", [NEW] + list(files))
+        choice = st.selectbox("Allocation", [NEW] + list(files))
         is_new = choice == NEW
         name = st.text_input("Name", value="" if is_new else choice,
-                             placeholder="e.g. my balanced mix")
+                             placeholder="e.g. balanced 60/40")
         start_df = (pd.DataFrame({"ticker": ["VTI", "BND"], "weight": [60.0, 40.0]}) if is_new
                     else read_weights(files[choice]))
         edited = st.data_editor(
             start_df, num_rows="dynamic", width="stretch", key=editor_key(choice),
             column_config={
-                "ticker": st.column_config.TextColumn("Ticker", help="Yahoo Finance symbol, e.g. VTI"),
+                "ticker": st.column_config.TextColumn("Ticker", help="Yahoo Finance symbol"),
                 "weight": st.column_config.NumberColumn("Weight %", min_value=0.0, step=1.0,
                                                         format="%.1f"),
             })
         cleaned = clean_weights(edited)
         total = cleaned["weight"].sum()
-        st.caption(f"{len(cleaned)} holdings, weights add up to {total:.1f}% "
-                   f"({'they will be rescaled to 100%' if abs(total - 100) > 0.01 else 'good'}).")
-        b1, b2 = st.columns(2)
-        if b1.button("💾 Save portfolio", type="primary", width="stretch"):
+        st.markdown(f"<div class='meta'>{len(cleaned)} HOLDINGS · Σ WEIGHT {total:.1f}%"
+                    f"{' · RESCALED TO 100%' if abs(total - 100) > 0.01 else ''}</div>",
+                    unsafe_allow_html=True)
+        b1, b2, _ = st.columns([1, 1, 1.4])
+        if b1.button("Save", type="primary", width="stretch"):
             if not name.strip():
-                st.error("Give the portfolio a name first.")
+                st.error("Name the allocation first.")
             elif cleaned.empty:
                 st.error("Add at least one ticker with a weight above 0.")
             else:
                 if is_new:
-                    n = len(files) + 1
-                    path = CAND_DIR / f"{n}_{slug(name)}.csv"
+                    path = CAND_DIR / f"{len(files) + 1}_{slug(name)}.csv"
                 else:
                     old = files[choice]
                     prefix = re.match(r"^(\d+)_", old.name)
@@ -164,124 +233,147 @@ def page_compare() -> None:
                     if path != old:
                         old.unlink()
                 write_weights(cleaned, path)
-                st.success(f"Saved {path.name}")
                 bump(choice)
                 st.rerun()
-        if not is_new and b2.button("🗑️ Delete", width="stretch"):
+        if not is_new and b2.button("Delete", width="stretch"):
             files[choice].unlink()
-            st.success(f"Deleted {choice}")
             st.rerun()
     with right:
-        st.markdown("**Common building blocks** (US-listed ETFs)")
-        st.markdown(
-            "| Ticker | What it holds |\n|---|---|\n"
-            "| VTI | Whole US stock market |\n| VOO | S&P 500 (US large companies) |\n"
-            "| VXUS | Stocks outside the US |\n| BND | US investment-grade bonds |\n"
-            "| TLT | Long-term US Treasury bonds |\n| GLD | Gold |\n"
-            "| QQQ | Nasdaq-100 (tech-heavy) |\n| VNQ | US real estate (REITs) |")
-        st.caption("Any Yahoo Finance ticker works. Older funds are used automatically to "
-                   "extend history before an ETF existed.")
+        st.markdown("<div class='meta'>REFERENCE · US-LISTED BUILDING BLOCKS</div>",
+                    unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame({
+            "Ticker": ["VTI", "VOO", "VXUS", "BND", "TLT", "GLD", "QQQ", "VNQ"],
+            "Exposure": ["US total stock market", "S&P 500", "Ex-US equities",
+                         "US investment-grade bonds", "Long-term Treasuries", "Gold",
+                         "Nasdaq-100", "US REITs"]}), hide_index=True, width="stretch")
+        note("Any Yahoo Finance ticker works. Before an ETF existed, a look-alike fund extends "
+             "its history (e.g. VXUS ← VEU ← VGTSX).")
 
-    st.subheader("2. Compare")
+    section("Run")
     files = candidate_files()
-    chosen = st.multiselect("Portfolios to compare", list(files), default=list(files))
-    use_proxies = st.checkbox("Extend history with look-alike funds (recommended)", value=True,
-                              help="Lets the comparison reach back to 2000 and include the "
-                                   "dot-com crash and 2008.")
-    if st.button("▶️ Run comparison", type="primary", disabled=not chosen):
-        with st.spinner("Downloading prices and comparing (the first run can take ~30 s)..."):
+    c1, c2 = st.columns([3, 1.2], gap="large")
+    chosen = c1.multiselect("Allocations", list(files), default=list(files))
+    use_proxies = c2.checkbox("Extend history with proxies", value=True,
+                              help="Reaches back to 2000, including the dot-com crash and 2008.")
+    if st.button("Run comparison", type="primary", disabled=not chosen):
+        with st.spinner("Downloading prices and computing (first run ~30 s)"):
             try:
                 st.session_state["compare_result"] = compare.run_compare(
                     make_cfg(use_proxies), [files[c] for c in chosen], synthetic=demo)
-            except Exception as exc:  # show a readable message instead of a stack trace
+            except Exception as exc:
                 st.error(f"Comparison failed: {exc}")
                 st.session_state.pop("compare_result", None)
-
     res = st.session_state.get("compare_result")
     if res:
-        show_compare_result(res)
+        show_compare(res)
 
 
-def show_compare_result(res: dict) -> None:
-    if res["synthetic"]:
-        st.warning("These results use MADE-UP prices (demo mode or download failure).")
-    st.markdown(f"**Period:** {res['start']:%b %Y} to {res['end']:%b %Y}, the same for every "
-                "portfolio. Rebalanced, before fees and taxes.")
-    if res["proxy_lines"]:
-        st.caption("Earlier years use look-alike funds: " + "; ".join(res["proxy_lines"]))
-    st.info(compare.HINDSIGHT_NOTE)
-
+def show_compare(res: dict) -> None:
+    names = res["names"]
     s = res["summary"]
-    table = pd.DataFrame({
-        "Portfolio": s["portfolio"],
-        "Growth / yr": s["growth_per_year_%"].map(pct),
-        "Volatility": s["volatility_%"].map(pct),
-        "Worst drop": s["max_drawdown_%"].map(pct),
-        "Recovery": s["peak_to_recovery"],
-        "Worst 12 months": s["worst_12m_%"].map(pct),
-        "$10k became": s["10k_becomes_$"].map(money),
-        "Bets now": s["bets_today"].map(lambda x: f"{x:.1f}"),
-        "Bets in COVID": s["bets_in_covid"].map(lambda x: f"{x:.1f}"),
-        "Biggest risk": s["biggest_risk"],
-    })
-    tab1, tab2, tab3 = st.tabs(["Overview", "Crises", "Robustness (rolling periods)"])
-    with tab1:
-        st.dataframe(table, hide_index=True, width="stretch")
-        st.image(str(res["comparison_png"]), width="stretch")
-    with tab2:
-        st.write("Return of each portfolio from the start of each crisis to the market bottom.")
-        st.dataframe(res["crisis_table"].map(lambda x: pct(x, signed=True)),
-                     width="stretch")
-    with tab3:
-        rs = res["rolling_summary"]
+    section("Results")
+    if res["synthetic"]:
+        flag("Synthetic prices: results are illustrative only.", negative=True)
+    st.markdown(f"<div class='meta'>WINDOW {res['start']:%Y-%m-%d} → {res['end']:%Y-%m-%d} · "
+                f"{len(names)} ALLOCATIONS · DAILY REBALANCED · GROSS OF FEES AND TAXES</div>",
+                unsafe_allow_html=True)
+    if res["proxy_lines"]:
+        st.markdown("<div class='meta'>PROXIES · " + " · ".join(res["proxy_lines"]) + "</div>",
+                    unsafe_allow_html=True)
+    note(compare.HINDSIGHT_NOTE)
+
+    t1, t2, t3 = st.tabs(["Performance", "Crises", "Robustness"])
+    with t1:
+        st.dataframe(pd.DataFrame({
+            "Allocation": s["portfolio"], "CAGR": s["growth_per_year_%"], "Vol": s["volatility_%"],
+            "Return / vol": s["return_per_risk"], "Max DD": s["max_drawdown_%"],
+            "Peak → recovery": s["peak_to_recovery"], "Worst 12m": s["worst_12m_%"],
+            "$10k →": s["10k_becomes_$"], "Bets now": s["bets_today"],
+            "Bets (COVID)": s["bets_in_covid"], "Top risk": s["biggest_risk"],
+        }), hide_index=True, width="stretch", column_config={
+            "CAGR": PCT, "Vol": PCT, "Return / vol": st.column_config.NumberColumn(format="%.2f"),
+            "Max DD": PCT, "Worst 12m": PCT, "$10k →": USD, "Bets now": NUM1,
+            "Bets (COVID)": NUM1})
+        a, b = st.columns([1.5, 1], gap="large")
+        with a:
+            st.markdown("<div class='meta'>GROWTH OF $10,000 · LOG SCALE</div>", unsafe_allow_html=True)
+            chart(ch.growth_chart(res["values"], names))
+        with b:
+            st.markdown("<div class='meta'>CAGR VS MAX DRAWDOWN</div>", unsafe_allow_html=True)
+            chart(ch.risk_return_scatter(s, names))
+        st.markdown("<div class='meta'>DRAWDOWN FROM RUNNING HIGH</div>", unsafe_allow_html=True)
+        chart(ch.drawdown_chart(res["values"], names))
+    with t2:
+        ct = res["crisis_table"]
+        long = ct.reset_index().melt("portfolio", var_name="crisis", value_name="ret").dropna()
+        st.markdown("<div class='meta'>RETURN FROM CRISIS START TO MARKET TROUGH · %</div>",
+                    unsafe_allow_html=True)
+        chart(ch.heatmap(long, "crisis", "portfolio", "ret", list(ct.columns), names))
+        note("Rows are crises, columns are allocations. Blue = held value, red = lost value.")
+    with t3:
+        rs, rw = res["rolling_summary"], res["rolling_windows"]
         if rs.empty:
             st.write("Not enough history for rolling periods.")
-        else:
-            st.write("Every 5- and 10-year holding period, started each month. **Worst** = if "
-                     "you had started at the worst month. Periods overlap, so treat this as "
-                     "'how much did timing matter', not as independent trials.")
-            for yrs, t in rs.groupby("years", sort=False):
-                st.markdown(f"**{yrs}-year periods** ({int(t['periods'].iloc[0])} start months)")
-                st.dataframe(pd.DataFrame({
-                    "Portfolio": t["portfolio"],
-                    "Worst": t["worst_%/yr"].map(lambda x: pct(x, True) + "/yr"),
-                    "1 in 10 bad": t["bad_10pct_%/yr"].map(lambda x: pct(x, True) + "/yr"),
-                    "Typical": t["typical_%/yr"].map(lambda x: pct(x, True) + "/yr"),
-                    "Best": t["best_%/yr"].map(lambda x: pct(x, True) + "/yr"),
-                    "Lost money": t["lost_money_%"].map(lambda x: f"{x:.0f}% of periods"),
-                    "Worst drop": t["worst_drop_inside_%"].map(pct),
-                }), hide_index=True, width="stretch")
-            if res["rolling_png"]:
-                st.image(str(res["rolling_png"]), width="stretch")
+            return
+        horizons = list(dict.fromkeys(rs["years"]))
+        yrs = st.radio("Holding period", horizons, index=len(horizons) - 1, horizontal=True,
+                       format_func=lambda y: f"{y} years")
+        t = rs[rs["years"] == yrs]
+        n_start = int(t["periods"].iloc[0])
+        st.markdown(f"<div class='meta'>{n_start} OVERLAPPING {yrs}-YEAR WINDOWS, ONE PER START "
+                    "MONTH · ANNUALISED RETURN</div>", unsafe_allow_html=True)
+        st.dataframe(pd.DataFrame({
+            "Allocation": t["portfolio"], "Worst": t["worst_%/yr"], "P10": t["bad_10pct_%/yr"],
+            "Median": t["typical_%/yr"], "Best": t["best_%/yr"], "Loss freq.": t["lost_money_%"],
+            "Max DD": t["worst_drop_inside_%"], "Ranked 1st": t["came_first_%"],
+        }), hide_index=True, width="stretch", column_config={
+            "Worst": SPCT, "P10": SPCT, "Median": SPCT, "Best": SPCT,
+            "Loss freq.": st.column_config.NumberColumn(format="%.0f%%"), "Max DD": PCT,
+            "Ranked 1st": st.column_config.NumberColumn(format="%.0f%%")})
+        a, b = st.columns([1.5, 1], gap="large")
+        with a:
+            st.markdown("<div class='meta'>ANNUALISED RETURN BY START MONTH</div>", unsafe_allow_html=True)
+            chart(ch.rolling_lines(rw, yrs, names))
+        with b:
+            st.markdown("<div class='meta'>DISTRIBUTION · WORST ▏ P10–BEST ━ MEDIAN ●</div>",
+                        unsafe_allow_html=True)
+            chart(ch.rolling_range(rs, yrs, names))
+        note("Windows overlap heavily (about "
+             f"{max(1, round((pd.Timestamp(rw['end'].max()) - pd.Timestamp(rw['start'].min())).days / 365.25 / yrs))}"
+             " independent periods), so this measures sensitivity to timing, not independent "
+             "trials. 'Ranked 1st' ignores risk.")
 
 
 # ---------------------------------------------------------------------------------------
-# Page: My portfolio
+# Page: Portfolio
 # ---------------------------------------------------------------------------------------
 
 
-def page_my_portfolio() -> None:
-    st.title("My portfolio")
-    st.write("Enter what you actually own. Prices are fetched from Yahoo Finance when you "
-             "click **Check my portfolio**. The file is saved only on this computer.")
-
+def page_portfolio() -> None:
+    header("Holdings", "My portfolio",
+           "Record positions, value them at the latest close, and stress-test the current "
+           "mix. Saved locally in portfolios/my/ (excluded from git).")
     MY_DIR.mkdir(parents=True, exist_ok=True)
-    existing = sorted(p.stem for p in MY_DIR.glob("*.csv"))
+    existing = sorted(p.stem for p in MY_DIR.glob("*.csv") if not p.stem.endswith("_history"))
     names = existing or ["my_portfolio"]
-    c1, c2 = st.columns([1, 1])
+
+    section("Positions")
+    c1, c2, c3 = st.columns([1, 1, 0.8], gap="large")
     with c1:
-        which = st.selectbox("Portfolio file", names + ["➕ New file"])
-        if which == "➕ New file":
+        which = st.selectbox("File", names + ["New file"])
+        if which == "New file":
             which = slug(st.text_input("New file name", value="second_portfolio"))
     path = MY_DIR / f"{which}.csv"
     key = f"my_{which}"
     if key not in st.session_state:
         st.session_state[key] = hd.load_holdings(path)
-
+    files = candidate_files()
     with c2:
-        files = candidate_files()
-        src = st.selectbox("Optional: start from a candidate's mix", ["(none)"] + list(files))
-        if st.button("Use it as my target weights", disabled=src == "(none)"):
+        src = st.selectbox("Load targets from allocation", ["—"] + list(files))
+    with c3:
+        st.write("")
+        st.write("")
+        if st.button("Apply targets", disabled=src == "—", width="stretch"):
             w = read_weights(files[src])
             cur = hd.clean_holdings(st.session_state[key]).set_index("ticker")
             new = pd.DataFrame({"ticker": w["ticker"], "target_weight": w["weight"]})
@@ -292,39 +384,38 @@ def page_my_portfolio() -> None:
             bump(key)
             st.rerun()
 
-    st.markdown("**Holdings** — add one row per fund. For uninvested cash add a row with "
-                "ticker **CASH** and the dollar amount in *Shares*.")
     edited = st.data_editor(
-        st.session_state[key], num_rows="dynamic", width="stretch",
-        key=editor_key(key),
+        st.session_state[key], num_rows="dynamic", width="stretch", key=editor_key(key),
         column_config={
             "ticker": st.column_config.TextColumn("Ticker", help="e.g. VTI, or CASH"),
             "shares": st.column_config.NumberColumn("Shares", min_value=0.0, format="%.4f",
-                                                    help="Number of shares (CASH: dollars)"),
-            "invested_usd": st.column_config.NumberColumn(
-                "Total invested $", min_value=0.0, format="$%.2f",
-                help="What you paid in total for this holding (0 if unknown)"),
-            "target_weight": st.column_config.NumberColumn(
-                "Target %", min_value=0.0, format="%.1f", help="The share you are aiming for"),
+                                                    help="Number of shares (CASH: dollar amount)"),
+            "invested_usd": st.column_config.NumberColumn("Cost basis $", min_value=0.0,
+                                                          format="%.2f",
+                                                          help="Total paid for the position"),
+            "target_weight": st.column_config.NumberColumn("Target %", min_value=0.0,
+                                                           format="%.1f"),
         })
-    b1, b2, b3 = st.columns(3)
-    if b1.button("💾 Save", type="primary", width="stretch"):
+    st.markdown("<div class='meta'>ADD A ROW WITH TICKER CASH FOR UNINVESTED CASH (SHARES = "
+                "DOLLARS)</div>", unsafe_allow_html=True)
+    b1, b2, b3, _ = st.columns([1, 1, 1, 1.5])
+    if b1.button("Save", type="primary", width="stretch"):
         hd.save_holdings(edited, path)
         st.session_state[key] = hd.clean_holdings(edited)
-        st.success(f"Saved {path.relative_to(BASE)}")
-    check = b2.button("🔄 Check my portfolio", width="stretch")
-    stress = b3.button("🧪 Stress-test my holdings", width="stretch")
+        st.toast(f"Saved {path.relative_to(BASE)}")
+    check = b2.button("Value", width="stretch")
+    stress = b3.button("Stress test", width="stretch")
 
     cleaned = hd.clean_holdings(edited)
     if (check or stress) and cleaned.empty:
-        st.error("Add at least one holding first.")
+        st.error("Add at least one position first.")
         return
     if check or stress:
-        with st.spinner("Fetching latest prices..."):
+        with st.spinner("Fetching latest prices"):
             try:
                 st.session_state[f"val_{which}"] = hd.value_holdings(cleaned, make_cfg(), demo)
             except Exception as exc:
-                st.error(f"Could not value the portfolio: {exc}")
+                st.error(f"Valuation failed: {exc}")
                 return
     val = st.session_state.get(f"val_{which}")
     if val:
@@ -332,9 +423,9 @@ def page_my_portfolio() -> None:
     if stress and val:
         weights = hd.weights_from_holdings(val[0])
         if len(weights) < 2:
-            st.warning("The stress test needs at least 2 invested holdings with shares.")
+            st.warning("The stress test needs at least 2 invested positions.")
         else:
-            with st.spinner("Running stress test and crisis replay..."):
+            with st.spinner("Running stress test and crisis replay"):
                 try:
                     st.session_state[f"stress_{which}"] = pdx.run_portfolio_weights(
                         make_cfg(), weights, synthetic=demo)
@@ -346,58 +437,105 @@ def page_my_portfolio() -> None:
 
 
 def show_valuation(table: pd.DataFrame, totals: dict) -> None:
-    st.subheader(f"Value as of {totals['as_of']}")
+    section(f"Valuation · close {totals['as_of']}")
     if totals["missing"]:
-        st.error("No price found for: " + ", ".join(totals["missing"]) +
-                 ". Check the ticker symbols on finance.yahoo.com.")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Total value", money(totals["value"]),
-              delta=f"{money(totals['day_change'], True)} ({pct(totals['day_change_%'], True)}) today")
-    m2.metric("Total invested", money(totals["invested"]))
-    m3.metric("Gain / loss", money(totals["gain"], True), delta=pct(totals["gain_%"], True))
-    if totals["off_target"]:
-        st.warning(f"More than {hd.DRIFT_BAND:.0f} percentage points away from target: "
-                   + ", ".join(totals["off_target"]) + ". You may want to rebalance.")
-    show = pd.DataFrame({
-        "Ticker": table["ticker"], "Shares": table["shares"].map(lambda x: f"{x:,.4f}"),
-        "Price": table["price"].map(lambda x: "n/a" if pd.isna(x) else f"${x:,.2f}"),
-        "Value": table["value"].map(money), "Invested": table["invested_usd"].map(money),
-        "Gain": table["gain_usd"].map(lambda x: money(x, True)),
-        "Gain %": table["gain_%"].map(lambda x: pct(x, True)),
-        "Today": table["day_change_usd"].map(lambda x: money(x, True)),
-        "Actual %": table["actual_%"].map(pct), "Target %": table["target_%"].map(pct),
-        "Drift": table["drift_pts"].map(lambda x: "n/a" if pd.isna(x) else f"{x:+.1f} pts"),
-        "Rebalance?": table["rebalance_flag"].map(lambda x: "⚠️" if x else ""),
-    })
-    st.dataframe(show, hide_index=True, width="stretch")
+        flag("No price for " + ", ".join(totals["missing"]) + ". Check the symbols on "
+             "finance.yahoo.com.", negative=True)
+    m = st.columns(4)
+    m[0].metric("Market value", fmt_money(totals["value"]),
+                delta=f"{fmt_money(totals['day_change'], True)} ({fmt_pct(totals['day_change_%'])}) 1D")
+    m[1].metric("Cost basis", fmt_money(totals["invested"]))
+    m[2].metric("Unrealised P&L", fmt_money(totals["gain"], True), delta=fmt_pct(totals["gain_%"]))
+    m[3].metric("Positions off target", f"{len(totals['off_target'])}",
+                delta=", ".join(totals["off_target"]) or "none", delta_color="off",
+                delta_arrow="off")
+    st.dataframe(pd.DataFrame({
+        "Ticker": table["ticker"], "Shares": table["shares"], "Price": table["price"],
+        "Value": table["value"], "Cost": table["invested_usd"],
+        "P&L ($)": table["gain_usd"].round(0) + 0.0, "P&L %": table["gain_%"],
+        "1D ($)": table["day_change_usd"].round(0) + 0.0, "Weight": table["actual_%"],
+        "Target": table["target_%"], "Drift (pts)": table["drift_pts"],
+        "Status": table["rebalance_flag"].map(lambda x: "REBALANCE" if x else "ok"),
+    }), hide_index=True, width="stretch", column_config={
+        "Shares": st.column_config.NumberColumn(format="%.4f"),
+        "Price": st.column_config.NumberColumn(format="$%.2f"), "Value": USD, "Cost": USD,
+        "P&L ($)": SUSD, "P&L %": SPCT, "1D ($)": SUSD, "Weight": PCT, "Target": PCT,
+        "Drift (pts)": st.column_config.NumberColumn(format="%+.1f")})
+    note(f"Status REBALANCE = more than {hd.DRIFT_BAND:.0f} percentage points from target. "
+         "Cash with a 0% target is treated as a buffer.")
 
 
 def show_stress(res: dict) -> None:
-    st.subheader("Stress test of your current holdings")
+    section("Stress test · current weights")
     if res["synthetic"]:
-        st.warning("These results use MADE-UP prices.")
-    sc = res["scenarios"].set_index("scenario")
-    today = sc.iloc[0]
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Independent bets today", f"{today['independent_bets']:.1f}")
-    c2.metric("Volatility today", pct(today["portfolio_vol_%"]))
-    c3.metric("Volatility with crisis correlations", pct(sc.iloc[1]["portfolio_vol_%"]),
-              delta=pct(100 * (sc.iloc[1]["portfolio_vol_%"] / today["portfolio_vol_%"] - 1), True),
-              delta_color="inverse")
-    st.caption("Cash is left out of the stress test (it has no price history), so real "
-               "swings on your total, including cash, are a bit smaller.")
-    st.image(str(res["report_png"]), width="stretch")
-    if not res["replay"].empty:
-        st.markdown("**What your current mix would have done in past crises** (actual prices)")
-        r = res["replay"]
+        flag("Synthetic prices: results are illustrative only.", negative=True)
+    sc, hold = res["scenarios"], res["holdings"]
+    today, cc = sc.iloc[0], sc.iloc[1]
+    m = st.columns(4)
+    m[0].metric("Independent bets", f"{today['independent_bets']:.1f}",
+                delta=f"{cc['independent_bets']:.1f} in crisis", delta_color="off",
+                delta_arrow="off")
+    m[1].metric("Volatility (ann.)", fmt_pct(today["portfolio_vol_%"], False))
+    m[2].metric("Vol · crisis correlations", fmt_pct(cc["portfolio_vol_%"], False),
+                delta=fmt_pct(100 * (cc["portfolio_vol_%"] / today["portfolio_vol_%"] - 1)),
+                delta_color="inverse")
+    m[3].metric("Largest risk contributor", hold.index[0],
+                delta=f"{hold['weight_%'].iloc[0]:.0f}% capital → "
+                      f"{hold['risk_share_today_%'].iloc[0]:.0f}% risk", delta_color="off",
+                delta_arrow="off")
+    info = res["info"]
+    st.markdown(f"<div class='meta'>TODAY = LAST 90 SESSIONS TO {info['today_end']:%Y-%m-%d} · "
+                f"CRISIS WINDOW {info['crisis_start']:%Y-%m-%d} → {info['crisis_end']:%Y-%m-%d} · "
+                "CASH EXCLUDED</div>", unsafe_allow_html=True)
+    a, b = st.columns(2, gap="large")
+    with a:
+        st.markdown("<div class='meta'>CAPITAL VS RISK CONTRIBUTION · %</div>", unsafe_allow_html=True)
+        chart(ch.money_vs_risk(hold))
+    with b:
+        st.markdown("<div class='meta'>CORRELATION TO PORTFOLIO · TODAY VS CRISIS</div>",
+                    unsafe_allow_html=True)
+        chart(ch.correlation_dumbbell(hold))
+    a, b = st.columns([1.1, 1], gap="large")
+    with a:
+        st.markdown("<div class='meta'>PORTFOLIO VOLATILITY BY REGIME · %/YR</div>",
+                    unsafe_allow_html=True)
+        chart(ch.scenario_bars(sc))
+    with b:
+        st.markdown("<div class='meta'>SCENARIOS · NORMAL-DISTRIBUTION ESTIMATES</div>",
+                    unsafe_allow_html=True)
         st.dataframe(pd.DataFrame({
-            "Crisis": r["crisis"], "Your mix": r["portfolio_return_%"].map(lambda x: pct(x, True)),
-            "S&P 500 (SPY)": r["SPY_return_%"].map(lambda x: pct(x, True)),
-            "Worst drop": r["max_drawdown_%"].map(pct), "Worst day": r["worst_day_%"].map(pct),
-            "Best holding": r["best_holding"] + " " + r["best_holding_return_%"].map(lambda x: pct(x, True)),
-            "Worst holding": r["worst_holding"] + " " + r["worst_holding_return_%"].map(lambda x: pct(x, True)),
-        }), hide_index=True, width="stretch")
-        st.image(str(res["crises_png"]), width="stretch")
+            "Scenario": ["Today", "Crisis correlations", "Full crisis repeat", "All corr = 1"],
+            "Vol": sc["portfolio_vol_%"], "1-in-20 day": sc["bad_day_1in20_%"],
+            "1-in-20 month": sc["bad_month_1in20_%"], "Bets": sc["independent_bets"],
+            "Avg ρ": sc["avg_corr"]}), hide_index=True, width="stretch", column_config={
+                "Vol": PCT, "1-in-20 day": PCT, "1-in-20 month": PCT, "Bets": NUM1,
+                "Avg ρ": st.column_config.NumberColumn(format="%.2f")})
+        note("Normal-distribution estimates understate crash tails; the crisis replay below "
+             "uses actual losses.")
+    r = res["replay"]
+    if not r.empty:
+        section("Crisis replay · actual prices, buy-and-hold from crisis start")
+        st.dataframe(pd.DataFrame({
+            "Crisis": r["crisis"], "Start": r["start"], "Trough": r["end"],
+            "Portfolio": r["portfolio_return_%"], "SPY": r["SPY_return_%"],
+            "Max DD": r["max_drawdown_%"], "Worst day": r["worst_day_%"],
+            "Worst 21d": r["worst_21d_%"], "Bets": r["independent_bets"],
+            "Best": r["best_holding"], "Best %": r["best_holding_return_%"],
+            "Worst": r["worst_holding"], "Worst %": r["worst_holding_return_%"],
+        }), hide_index=True, width="stretch", column_config={
+            "Portfolio": SPCT, "SPY": SPCT, "Max DD": PCT, "Worst day": PCT, "Worst 21d": PCT,
+            "Bets": NUM1, "Best %": SPCT, "Worst %": SPCT})
+        a, b = st.columns([1, 1.2], gap="large")
+        with a:
+            st.markdown("<div class='meta'>PORTFOLIO VS SPY · %</div>", unsafe_allow_html=True)
+            chart(ch.replay_bars(r))
+        with b:
+            rh = res["replay_holdings"].drop(columns="weight_%")
+            long = rh.reset_index().melt("ticker", var_name="crisis", value_name="ret").dropna()
+            st.markdown("<div class='meta'>RETURN BY HOLDING AND CRISIS · %</div>",
+                        unsafe_allow_html=True)
+            chart(ch.heatmap(long, "crisis", "ticker", "ret", list(rh.columns),
+                             list(rh.mean(axis=1).sort_values(ascending=False).index)))
 
 
 # ---------------------------------------------------------------------------------------
@@ -406,19 +544,23 @@ def show_stress(res: dict) -> None:
 
 
 def page_report() -> None:
-    st.title("Daily report")
-    st.write("One page with your money, your mix, the market regime, diversification health "
-             "and anything that changed since the last report.")
+    header("Monitoring", "Daily report",
+           "Value, allocation drift, market regime and diversification in one page, with "
+           "alerts only for what changed since the previous report.")
     MY_DIR.mkdir(parents=True, exist_ok=True)
     files = sorted(p for p in MY_DIR.glob("*.csv") if not p.stem.endswith("_history"))
     if not files:
-        st.info("Save your holdings on the **My portfolio** page first.")
+        note("Save positions on the Portfolio page first.")
         return
-    which = st.selectbox("Portfolio", [p.stem for p in files])
+    c1, c2, _ = st.columns([1.2, 0.8, 2])
+    which = c1.selectbox("Portfolio", [p.stem for p in files])
+    c2.write("")
+    c2.write("")
+    go = c2.button("Generate", type="primary", width="stretch")
     path = MY_DIR / f"{which}.csv"
     latest = BASE / "outputs" / "reports" / f"{which}_latest.html"
-    if st.button("📰 Generate today's report", type="primary"):
-        with st.spinner("Fetching prices and building the report (about 20-40 s)..."):
+    if go:
+        with st.spinner("Fetching prices and building the report (20–40 s)"):
             try:
                 st.session_state[f"report_{which}"] = rp.run_report(make_cfg(), path,
                                                                     synthetic=demo)
@@ -427,18 +569,16 @@ def page_report() -> None:
     res = st.session_state.get(f"report_{which}")
     page_html = res["html"] if res else (latest.read_text() if latest.exists() else None)
     if res and res["synthetic"]:
-        st.warning("This report uses MADE-UP prices (demo mode).")
+        flag("Synthetic prices: results are illustrative only.", negative=True)
     if page_html:
-        if not res:
-            st.caption("Showing the most recent saved report. Click the button for today's.")
-        components.html(page_html, height=2600, scrolling=True)
-        st.caption(f"Saved copies are in {latest.parent.relative_to(BASE)}/ "
-                   "(open the .html files in any browser).")
+        st.markdown(f"<div class='meta'>{'GENERATED NOW' if res else 'LAST SAVED REPORT'} · "
+                    f"ARCHIVE IN {latest.parent.relative_to(BASE)}/</div>", unsafe_allow_html=True)
+        components.html(page_html, height=2400, scrolling=True)
 
 
-if page == "Compare portfolios":
+if page == "Compare":
     page_compare()
-elif page == "My portfolio":
-    page_my_portfolio()
+elif page == "Portfolio":
+    page_portfolio()
 else:
     page_report()

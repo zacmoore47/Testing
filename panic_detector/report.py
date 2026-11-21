@@ -191,7 +191,9 @@ def chart_value(value_1y: pd.Series, logged: pd.DataFrame) -> str | None:
         d = pd.to_datetime(logged["date"])
         ax.plot(d, logged["value"], "o", color="#eb6834", markersize=5,
                 label="Your logged daily values")
-    ax.set_ylabel("$", color=pdx.INK)
+    from matplotlib.ticker import FuncFormatter
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"${v:,.0f}"))
+    ax.tick_params(labelsize=8)
     ax.legend(frameon=False, fontsize=8, loc="best")
     return _png(fig)
 
@@ -208,7 +210,8 @@ def chart_mix(table: pd.DataFrame) -> str | None:
     ax.set_yticks(y)
     ax.set_yticklabels(t["ticker"])
     ax.grid(axis="y", visible=False)
-    ax.set_xlabel("% of portfolio", color=pdx.INK)
+    ax.set_xlabel("% of portfolio", color=pdx.INK, fontsize=8)
+    ax.tick_params(labelsize=8)
     ax.legend(frameon=False, fontsize=8, loc="lower right")
     return _png(fig)
 
@@ -223,33 +226,46 @@ def chart_regime(regime: dict) -> str:
             label="Normal level (past 2 years)")
     for s, e in pdx._runs(m["panic"] | m["vol_panic"]):
         ax.axvspan(s, e, color=pdx.PANIC_SHADE, alpha=0.12, linewidth=0)
-    ax.set_ylabel("Avg ρ", color=pdx.INK)
+    ax.set_ylabel("Avg ρ", color=pdx.INK, fontsize=8)
+    ax.tick_params(labelsize=8)
     ax.legend(frameon=False, fontsize=8, loc="best")
     return _png(fig)
 
 
 CSS = """
-:root { --ink:#2b2b2b; --muted:#6b6b6b; --bg:#ffffff; --card:#f6f5f2; --line:#e4e3df;
-        --good:#008300; --bad:#c62f2e; --warn:#a86b00; --blue:#2a78d6; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-       color: var(--ink); background: var(--bg); max-width: 900px; margin: 0 auto;
-       padding: 24px 16px 48px; line-height: 1.45; }
-h1 { font-size: 26px; margin: 0 0 4px; } h2 { font-size: 18px; margin: 28px 0 10px; }
-.sub { color: var(--muted); margin: 0 0 18px; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-.card { background: var(--card); border-radius: 10px; padding: 12px 14px; }
-.card .k { color: var(--muted); font-size: 13px; } .card .v { font-size: 22px; font-weight: 600; }
-.card .d { font-size: 13px; } .pos { color: var(--good); } .neg { color: var(--bad); }
-.alerts { border-left: 4px solid var(--warn); background: #fff7e6; padding: 10px 14px;
-          border-radius: 6px; } .ok { border-left-color: var(--good); background: #eef8ee; }
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+:root { --ink:#1a1a1a; --muted:#6b6b6b; --bg:#fbfbfa; --card:#ffffff; --line:#e3e3df;
+        --pos:#0f7b3f; --neg:#c62f2e; --warn:#a86b00; --accent:#2a78d6; }
+body { font-family: 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif; color: var(--ink);
+       background: var(--bg); max-width: 920px; margin: 0 auto; padding: 28px 16px 48px;
+       line-height: 1.45; }
+.eyebrow, .k, th, .note, .sub, h2 { font-family: 'IBM Plex Mono', monospace; }
+.eyebrow { text-transform: uppercase; letter-spacing: .14em; font-size: 11px; color: var(--accent); }
+h1 { font-size: 24px; font-weight: 600; margin: 4px 0 2px; letter-spacing: -0.01em; }
+.sub { color: var(--muted); font-size: 12px; margin: 0 0 18px; letter-spacing: .03em; }
+h2 { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .12em;
+     color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 6px; margin: 30px 0 12px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 3px; padding: 10px 14px; }
+.card .k { color: var(--muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
+.card .v { font-family: 'IBM Plex Mono', monospace; font-size: 21px; font-weight: 500; margin-top: 2px; }
+.card .d { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--muted); }
+.pos { color: var(--pos) !important; } .neg { color: var(--neg) !important; }
+.alerts { border-left: 2px solid var(--warn); background: #fff8ec; padding: 10px 14px; font-size: 14px; }
+.ok { border-left-color: var(--pos); background: #f0f7f2; }
 .alerts ul { margin: 4px 0; padding-left: 18px; }
-.badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-weight: 600;
-         color: #fff; } .calm { background: var(--good); } .elevated { background: var(--warn); }
-.stressed { background: var(--bad); }
-table { border-collapse: collapse; width: 100%; font-size: 14px; }
-th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--line); }
-th:first-child, td:first-child { text-align: left; } th { color: var(--muted); font-weight: 500; }
-img { max-width: 100%; height: auto; } .note { color: var(--muted); font-size: 13px; }
+.badge { display: inline-block; padding: 1px 8px; border-radius: 2px; font-family: 'IBM Plex Mono', monospace;
+         font-size: 12px; font-weight: 500; letter-spacing: .08em; color: #fff; margin-right: 6px; }
+.calm { background: var(--pos); } .elevated { background: var(--warn); } .stressed { background: var(--neg); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; background: var(--card);
+        border: 1px solid var(--line); }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--line); }
+td { font-family: 'IBM Plex Mono', monospace; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--muted); font-weight: 500; font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; }
+.tag { font-size: 10.5px; color: var(--warn); letter-spacing: .06em; }
+img { max-width: 100%; height: auto; margin-top: 10px; }
+.note { color: var(--muted); font-size: 11.5px; border-left: 2px solid var(--line); padding-left: 10px; }
 """
 
 
@@ -274,18 +290,19 @@ def render_html(name: str, table: pd.DataFrame, totals: dict, regime: dict | Non
     parts = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
              f"<meta name='viewport' content='width=device-width, initial-scale=1'>"
              f"<title>Daily report</title><style>{CSS}</style></head><body>",
-             f"<h1>Daily report: {e(name)}</h1>",
-             f"<p class='sub'>Prices as of {totals['as_of']} · generated {date.today()}</p>"]
+             "<div class='eyebrow'>Portfolio Lab · daily report</div>",
+             f"<h1>{e(name.title())}</h1>",
+             f"<p class='sub'>CLOSE {totals['as_of']} · GENERATED {date.today()}</p>"]
     # What changed
     if alerts:
-        parts.append("<div class='alerts'><b>Worth your attention</b><ul>" +
+        parts.append("<div class='alerts'><b>Alerts</b><ul>" +
                      "".join(f"<li>{e(a)}</li>" for a in alerts) + "</ul></div>")
     else:
         msg = ("First report: from tomorrow this box lists only what changed."
                if extra["first_report"] else "All normal: nothing needs your attention today.")
         parts.append(f"<div class='alerts ok'>{e(msg)}</div>")
     # Your money
-    parts.append("<h2>Your money</h2><div class='cards'>")
+    parts.append("<h2>Position</h2><div class='cards'>")
     parts.append(f"<div class='card'><div class='k'>Total value</div><div class='v'>"
                  f"{_money(totals['value'])}</div><div class='d {_cls(totals['day_change'])}'>"
                  f"{_money(totals['day_change'], True)} ({_pct(totals['day_change_%'])}) today"
@@ -303,11 +320,11 @@ def render_html(name: str, table: pd.DataFrame, totals: dict, regime: dict | Non
                      "<p class='note'>The line assumes you held today's shares all year; the "
                      "dots are the values logged by each daily report.</p>")
     # Your mix
-    parts.append("<h2>Your mix</h2><table><tr><th>Holding</th><th>Value</th><th>Today</th>"
-                 "<th>Gain</th><th>Actual</th><th>Target</th><th>Drift</th></tr>")
+    parts.append("<h2>Allocation</h2><table><tr><th>Ticker</th><th>Value</th><th>1D</th>"
+                 "<th>P&amp;L</th><th>Weight</th><th>Target</th><th>Drift</th></tr>")
     for _, r in table.iterrows():
-        flag = " ⚠️" if r["rebalance_flag"] else ""
-        drift = "n/a" if pd.isna(r["drift_pts"]) else f"{r['drift_pts']:+.1f} pts{flag}"
+        flag = " <span class='tag'>REBALANCE</span>" if r["rebalance_flag"] else ""
+        drift = "n/a" if pd.isna(r["drift_pts"]) else f"{r['drift_pts']:+.1f}{flag}"
         parts.append(f"<tr><td>{e(r['ticker'])}</td><td>{_money(r['value'])}</td>"
                      f"<td class='{_cls(r['day_change_usd'])}'>{_money(r['day_change_usd'], True)}</td>"
                      f"<td class='{_cls(r['gain_%'])}'>{_pct(r['gain_%'])}</td>"
@@ -316,12 +333,12 @@ def render_html(name: str, table: pd.DataFrame, totals: dict, regime: dict | Non
     parts.append("</table>")
     if charts.get("mix"):
         parts.append(f"<img src='{charts['mix']}' alt='Actual vs target mix'>")
-    parts.append(f"<p class='note'>⚠️ = more than {hd.DRIFT_BAND:.0f} percentage points away "
-                 "from target.</p>")
+    parts.append(f"<p class='note'>REBALANCE = more than {hd.DRIFT_BAND:.0f} percentage "
+                 "points from target. Drift in percentage points.</p>")
     # Market regime
     parts.append("<h2>Market regime</h2>")
     if regime:
-        parts.append(f"<p><span class='badge {regime['level']}'>{regime['level'].upper()}</span> "
+        parts.append(f"<p><span class='badge {regime['level']}'>{regime['level'].upper()}</span>"
                      f"{e(REGIME_TEXT[regime['level']])}</p>")
         parts.append("<div class='cards'>"
                      f"<div class='card'><div class='k'>Average correlation (41 large caps)</div>"
@@ -336,7 +353,7 @@ def render_html(name: str, table: pd.DataFrame, totals: dict, regime: dict | Non
     else:
         parts.append("<p class='note'>Market regime unavailable today (download failed).</p>")
     # Diversification
-    parts.append("<h2>Diversification health</h2>")
+    parts.append("<h2>Diversification</h2>")
     if div:
         rise = 100 * (div["vol_crisis"] / div["vol_today"] - 1)
         parts.append("<div class='cards'>"

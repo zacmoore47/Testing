@@ -4,3 +4,10 @@ toolbarMode = "minimal"      # hides the "Deploy" button so nothing gets publish
 
 [browser]
 gatherUsageStats = false     # do not send usage statistics to Streamlit
+
+[theme]
+base = "light"
+primaryColor = "#2a78d6"
+backgroundColor = "#fbfbfa"
+secondaryBackgroundColor = "#f1f1ee"
+textColor = "#1a1a1a"

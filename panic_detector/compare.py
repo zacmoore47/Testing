@@ -194,6 +194,7 @@ def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> 
     result = {"summary": summary, "crisis_table": crisis_table, "rolling_summary": roll_summary,
               "rolling_windows": roll_windows, "start": common_start, "end": prices.index[-1],
               "proxy_lines": proxy_lines, "synthetic": synthetic,
+              "values": pd.DataFrame(values), "names": list(ports),
               "comparison_png": outdir / "comparison.png",
               "rolling_png": outdir / "rolling.png" if not roll_summary.empty else None}
     plot_comparison(summary, crisis_table, values, common_start, outdir / "comparison.png",

@@ -115,6 +115,9 @@ volatility, not correlation.
 - [~] **S3. Daily report (built, awaiting first real run):** `--report portfolios/my/<file>.csv` or the app's Daily report page; HTML page with value, daily and total P&L, actual vs target mix
       and rebalance flags, market regime, diversification health, crisis exposure, alerts
       only on change; daily value history
+- [x] **UI redesign:** minimal "quant desk" style: IBM Plex Sans/Mono, monochrome + one accent,
+      no emojis, numeric sortable tables, interactive Altair charts (charts.py) with hover values;
+      daily report HTML restyled to match
 - [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification
 
 ## Research track (later, optional)

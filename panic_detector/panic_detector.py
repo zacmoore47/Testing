@@ -51,6 +51,11 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")  # headless backend: we only save files
+matplotlib.rcParams.update({
+    "font.family": "sans-serif",
+    "font.sans-serif": ["IBM Plex Sans", "Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
+    "axes.titleweight": "regular",
+})
 
 import matplotlib.dates as mdates  # noqa: E402
 import matplotlib.pyplot as plt  # noqa: E402
