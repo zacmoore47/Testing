@@ -40,10 +40,16 @@ volatility, not correlation.
 - [ ] Absorption-ratio change (Kritzman et al. 2011) as an early-warning candidate
 - [ ] Compare lead times across all Phase 1 stress episodes; keep only what helps
 
-## Phase 3: Make it useful to a person  ← 3a IN PROGRESS
-- [~] **3a. Portfolio stress test (built, awaiting first real-data run):** `--portfolio holdings.csv`; input a holdings CSV, then report the effective
-      number of independent bets, portfolio volatility now vs under crisis correlations
-      (e.g. March 2020), and which holdings actually diversify
+## Phase 3: Make it useful to a person  ← 3a DONE, upgrades next
+- [x] **3a. Portfolio stress test:** `--portfolio holdings.csv`. First real run (example portfolio,
+      Nov 2026): 13 holdings behave like 4.0 independent bets today, but only 1.5 under
+      COVID correlations (vol +64% with no change in volatility). 7 tech names = 66% of money
+      but about 90% of risk. XOM/KO/JNJ diversify today, but their correlation jumps to about 0.8 in a crisis;
+      only TLT (bonds) diversified in COVID (−0.44)
+- [ ] 3a+ Multiple crisis scenarios in one report (COVID 2020, 2022 inflation shock, 2025 tariffs):
+      the crisis type matters (bonds hedged in 2020 but fell with stocks in 2022)
+- [ ] 3a+ Historical (non-normal) bad-day/bad-month estimates from the crisis window, since
+      normal approximations understate crash tails
 - [ ] **3b. (Deprioritised) Honest backtest of a volatility-based de-risking rule** vs buy-and-hold: trading costs included,
       out-of-sample, explicit overfitting check
 
