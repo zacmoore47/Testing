@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import math
+import textwrap
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -179,9 +180,149 @@ def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> 
     pd.DataFrame(values).to_csv(outdir / "portfolio_values.csv", float_format="%.5f")
     log.info("Saved %s and %s", outdir / "comparison.csv", outdir / "portfolio_values.csv")
     log_comparison(summary, crisis_table, common_start, prices.index[-1])
+    roll_summary, roll_windows = rolling_analysis(values)
+    if not roll_summary.empty:
+        roll_summary.to_csv(outdir / "rolling_summary.csv", index=False, float_format="%.2f")
+        roll_windows.to_csv(outdir / "rolling_windows.csv", index=False, float_format="%.4f")
+        log.info("Saved %s and %s", outdir / "rolling_summary.csv", outdir / "rolling_windows.csv")
+        log_rolling(roll_summary, roll_windows)
+        plot_rolling(roll_summary, roll_windows, list(ports), outdir / "rolling.png")
     plot_comparison(summary, crisis_table, values, common_start, outdir / "comparison.png",
                     proxy_lines)
     return summary
+
+
+ROLLING_YEARS: tuple[int, ...] = (5, 10)
+
+
+def rolling_analysis(values: dict[str, pd.Series],
+                     years: tuple[int, ...] = ROLLING_YEARS) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Every holding period of N years, started at each month: how robust is each mix?
+
+    For each start month and horizon, each portfolio's annualised return and worst drop
+    within that period are computed, and portfolios are ranked by return. Windows overlap
+    heavily: 26 years of history contain only about 2-3 non-overlapping 10-year periods, so
+    the percentages describe how results varied with the start date, not independent trials.
+
+    Returns:
+        (summary per portfolio and horizon, one row per start date / horizon / portfolio)
+    """
+    vals = pd.DataFrame(values)
+    names = list(vals.columns)
+    month_starts = vals.groupby(vals.index.to_period("M")).head(1).index
+    rows = []
+    for yrs in years:
+        last_start = vals.index[-1] - pd.DateOffset(years=yrs)
+        starts = month_starts[month_starts <= last_start]
+        if len(starts) < 2:
+            log.info("Rolling %d-year periods: not enough history, skipped", yrs)
+            continue
+        for st in starts:
+            end = vals.index[vals.index.searchsorted(st + pd.DateOffset(years=yrs)) - 1]
+            win = vals.loc[st:end]
+            span = (win.index[-1] - win.index[0]).days / 365.25
+            ann = (win.iloc[-1] / win.iloc[0]) ** (1 / span) - 1
+            mdd = (win / win.cummax() - 1).min()
+            rank = ann.rank(ascending=False, method="min")
+            for n in names:
+                rows.append({"years": yrs, "start": st.date(), "end": end.date(), "portfolio": n,
+                             "ann_return": ann[n], "max_drawdown": mdd[n], "rank": rank[n]})
+    windows = pd.DataFrame(rows)
+    if windows.empty:
+        return pd.DataFrame(), windows
+    g = windows.groupby(["years", "portfolio"], sort=False)
+    summary = pd.DataFrame({
+        "periods": g.size(),
+        "worst_%/yr": 100 * g["ann_return"].min(),
+        "bad_10pct_%/yr": 100 * g["ann_return"].quantile(0.10),
+        "typical_%/yr": 100 * g["ann_return"].median(),
+        "best_%/yr": 100 * g["ann_return"].max(),
+        "lost_money_%": 100 * g["ann_return"].apply(lambda x: (x < 0).mean()),
+        "worst_drop_inside_%": 100 * g["max_drawdown"].min(),
+        "came_first_%": 100 * g["rank"].apply(lambda x: (x == 1).mean()),
+        "avg_rank": g["rank"].mean(),
+    }).reset_index()
+    return summary, windows
+
+
+def log_rolling(summary: pd.DataFrame, windows: pd.DataFrame) -> None:
+    """Print one rolling-period table per horizon."""
+    for yrs, tab in summary.groupby("years", sort=False):
+        w = windows[windows["years"] == yrs]
+        show = tab.drop(columns="years").rename(columns={
+            "portfolio": "Portfolio", "periods": "Periods", "worst_%/yr": "Worst",
+            "bad_10pct_%/yr": "Bad (10%)", "typical_%/yr": "Typical", "best_%/yr": "Best",
+            "lost_money_%": "Lost money", "worst_drop_inside_%": "Worst drop",
+            "came_first_%": "Came 1st", "avg_rank": "Avg rank"})
+        for c in ("Worst", "Bad (10%)", "Typical", "Best"):
+            show[c] = show[c].map(lambda x: f"{x:+.1f}%/yr")
+        for c in ("Lost money", "Came 1st"):
+            show[c] = show[c].map(lambda x: f"{x:.0f}% of periods")
+        show["Worst drop"] = show["Worst drop"].map(lambda x: f"{x:.0f}%")
+        show["Avg rank"] = show["Avg rank"].map(lambda x: f"{x:.1f}")
+        log.info("ROLLING %d-YEAR PERIODS: one started every month, %s to %s (%d start dates; "
+                 "they overlap, so only about %.0f are truly separate):\n%s", yrs,
+                 w["start"].min(), w["start"].max(), w["start"].nunique(),
+                 max(1, ((pd.Timestamp(w["end"].max()) - pd.Timestamp(w["start"].min())).days
+                         / 365.25) / yrs), show.to_string(index=False))
+    log.info("How to read: 'Worst' = annual return if you had started at the worst month; "
+             "'Bad (10%)' = 1 in 10 start dates did this badly or worse; 'Came 1st' = share "
+             "of start dates where this mix had the highest return.")
+
+
+def plot_rolling(summary: pd.DataFrame, windows: pd.DataFrame, names: list[str],
+                 path: Path) -> None:
+    """Per horizon: return by start date (left) and range of outcomes (right)."""
+    colors = {n: SERIES_COLORS[i % len(SERIES_COLORS)] for i, n in enumerate(names)}
+    horizons = list(dict.fromkeys(summary["years"]))
+    fig, axes = plt.subplots(len(horizons), 2, figsize=(17, 5.2 * len(horizons)),
+                             gridspec_kw={"width_ratios": [1.6, 1]}, squeeze=False)
+    for row, yrs in enumerate(horizons):
+        ax_l, ax_r = axes[row]
+        for ax in (ax_l, ax_r):
+            pdx._style_axis(ax)
+        w = windows[windows["years"] == yrs]
+        for n in names:
+            d = w[w["portfolio"] == n]
+            ax_l.plot(pd.to_datetime(d["start"]), 100 * d["ann_return"], color=colors[n],
+                      linewidth=1.6, label=n)
+        ax_l.axhline(0, color=pdx.INK_MUTED, linewidth=0.8)
+        ax_l.set_ylabel(f"Return per year over the next {yrs} years (%)", color=pdx.INK)
+        ax_l.set_xlabel("Start date of the holding period", color=pdx.INK)
+        ax_l.set_title(f"{yrs}-year results depending on when you started", fontsize=11,
+                       color=pdx.INK, loc="left")
+        if row == 0:
+            ax_l.legend(frameon=False, fontsize=9, loc="upper right", ncol=2)
+
+        tab = summary[summary["years"] == yrs].set_index("portfolio").reindex(names)
+        y = np.arange(len(names))[::-1]
+        for yi, n in zip(y, names):
+            r = tab.loc[n]
+            ax_r.hlines(yi, r["worst_%/yr"], r["best_%/yr"], color=colors[n], linewidth=2, alpha=0.35)
+            ax_r.hlines(yi, r["bad_10pct_%/yr"], r["best_%/yr"], color=colors[n], linewidth=6,
+                        alpha=0.5)
+            ax_r.plot(r["typical_%/yr"], yi, "o", color=colors[n], markersize=9,
+                      markeredgecolor="white")
+            ax_r.plot(r["worst_%/yr"], yi, "|", color=pdx.INK, markersize=12)
+            ax_r.annotate(f"worst {r['worst_%/yr']:+.1f}%", (r["worst_%/yr"], yi),
+                          xytext=(0, -12), textcoords="offset points", ha="center",
+                          fontsize=8, color=pdx.INK)
+        ax_r.axvline(0, color=pdx.INK_MUTED, linewidth=0.8)
+        ax_r.set_yticks(y)
+        ax_r.set_yticklabels(names, fontsize=9)
+        ax_r.grid(axis="y", visible=False)
+        ax_r.set_xlabel("Return per year (%): thin = full range, thick = 10th pct to best, "
+                        "dot = typical", color=pdx.INK, fontsize=9)
+        ax_r.set_title(f"Range of {yrs}-year outcomes", fontsize=11, color=pdx.INK, loc="left")
+    fig.suptitle("Robustness: every holding period, started each month", fontsize=14,
+                 color=pdx.INK)
+    fig.text(0.5, 0.005, "Periods overlap heavily, so these show how results depended on the "
+             "start date, not independent trials. " + HINDSIGHT_NOTE, ha="center", va="bottom",
+             fontsize=8.5, color=pdx.INK_MUTED, wrap=True)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    log.info("Saved %s", path)
 
 
 def log_comparison(summary: pd.DataFrame, crisis_table: pd.DataFrame,
@@ -218,11 +359,21 @@ def plot_comparison(summary: pd.DataFrame, crisis_table: pd.DataFrame,
     for n in names:
         v = values[n]
         ax_g.plot(v.index, 10_000 * v, color=colors[n], linewidth=1.8, label=n)
-        ax_g.annotate(f" ${10_000 * v.iloc[-1]:,.0f}", (v.index[-1], 10_000 * v.iloc[-1]),
-                      fontsize=8, color=pdx.INK, va="center")
         dd = 100 * (v / v.cummax() - 1)
         ax_d.plot(dd.index, dd, color=colors[n], linewidth=1.3, label=n)
     ax_g.set_yscale("log")
+    # End labels, nudged apart so close finishers do not overlap.
+    finals = sorted(((10_000 * values[n].iloc[-1], n) for n in names))
+    lo, hi = np.log10(ax_g.get_ylim())
+    gap = 0.045 * (hi - lo)
+    ys: list[float] = []
+    for val, _ in finals:
+        y = np.log10(val)
+        ys.append(max(y, ys[-1] + gap) if ys else y)
+    x_end = max(values[n].index[-1] for n in names)
+    for (val, n), y in zip(finals, ys):
+        ax_g.annotate(f" ${val:,.0f}", (x_end, 10 ** y), fontsize=8, color=colors[n],
+                      va="center", annotation_clip=False)
     ax_g.set_ylabel("Value of $10,000 (log scale)", color=pdx.INK)
     ax_g.set_title("Growth of $10,000", fontsize=11, color=pdx.INK, loc="left")
     ax_g.legend(frameon=False, fontsize=9, loc="upper left")
@@ -252,7 +403,7 @@ def plot_comparison(summary: pd.DataFrame, crisis_table: pd.DataFrame,
                 ax_h.text(j, i, f"{vals[i, j]:+.0f}%", ha="center", va="center", fontsize=9,
                           color=pdx.INK)
     ax_h.set_xticks(range(vals.shape[1]))
-    ax_h.set_xticklabels([c.replace(" ", "\n", 1) for c in crisis_table.columns], fontsize=8)
+    ax_h.set_xticklabels([textwrap.fill(c, 13) for c in crisis_table.columns], fontsize=8)
     ax_h.set_yticks(range(vals.shape[0]))
     ax_h.set_yticklabels(crisis_table.index, fontsize=9)
     ax_h.tick_params(length=0, colors=pdx.INK_MUTED)

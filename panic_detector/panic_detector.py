@@ -41,6 +41,7 @@ import json
 import logging
 import math
 import sys
+import textwrap
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -1247,7 +1248,7 @@ def plot_crisis_replay(summary: pd.DataFrame, holdings: pd.DataFrame, cfg: Confi
                   va="top" if v < 0 else "bottom", fontsize=8, color=INK)
     ax_b.axhline(0, color=INK_MUTED, linewidth=0.8)
     ax_b.set_xticks(x)
-    ax_b.set_xticklabels([c.replace(" ", "\n", 1) for c in crises], fontsize=9)
+    ax_b.set_xticklabels([textwrap.fill(c, 13) for c in crises], fontsize=8)
     ax_b.grid(axis="x", visible=False)
     ax_b.set_ylabel("Return from crisis start to trough (%)", color=INK)
     ax_b.set_title("What today's portfolio would have done", fontsize=11, color=INK, loc="left")
@@ -1264,7 +1265,7 @@ def plot_crisis_replay(summary: pd.DataFrame, holdings: pd.DataFrame, cfg: Confi
             if np.isfinite(v):
                 ax_h.text(j, i, f"{v:+.0f}%", ha="center", va="center", fontsize=8, color=INK)
     ax_h.set_xticks(range(n_c))
-    ax_h.set_xticklabels([c.replace(" ", "\n", 1) for c in crises], fontsize=9)
+    ax_h.set_xticklabels([textwrap.fill(c, 13) for c in crises], fontsize=8)
     ax_h.set_yticks(range(n_h))
     ax_h.set_yticklabels(hold.index, fontsize=9)
     ax_h.tick_params(length=0, colors=INK_MUTED)
