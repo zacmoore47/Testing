@@ -82,8 +82,8 @@ volatility, not correlation.
   returns, so the tool shows trade-offs (growth vs bumpiness vs worst-case loss) and the user decides.
 
 ## Portfolio app track (current priority, replaces the old Phase 4 ordering)
-- [ ] **S0. Setup:** project moved into `panic_detector/`; user clones repo and uses `git pull`
-- [ ] **S1. Compare mode:** long-run growth/vol/max drawdown, crisis replay per portfolio,
+- [x] **S0. Setup:** project moved into `panic_detector/`; user clones repo and uses `git pull`
+- [~] **S1. Compare mode (built, awaiting first real run):** `--compare portfolios/candidates`; long-run growth/vol/max drawdown, crisis replay per portfolio,
       diversification today vs crisis, concentration; US ETF template portfolios; hindsight warning
 - [ ] **S2. Web app (Streamlit):** edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally

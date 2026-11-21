@@ -1,0 +1,8 @@
+# EXAMPLE for comparison only - not a recommendation. Edit freely.
+# VTI = total US stock market, VXUS = international stocks, BND = US bonds,
+# GLD = gold, QQQ = Nasdaq-100 (tech-heavy). Weights are % (rescaled to 100).
+# Classic 60% stocks / 40% bonds mix.
+ticker,weight
+VTI,36
+VXUS,24
+BND,40

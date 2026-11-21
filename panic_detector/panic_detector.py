@@ -27,6 +27,7 @@ Usage:
     python panic_detector.py --z-mode expanding   # original all-history panic baseline
     python panic_detector.py --universe etfs      # 9 sector ETFs since 1999 (survivorship-free)
     python panic_detector.py --portfolio example_portfolio.csv   # portfolio stress test
+    python panic_detector.py --compare portfolios/candidates     # compare candidate portfolios
     python panic_detector.py --help
 
 Outputs (./outputs/ for stocks, ./outputs/etfs/ for --universe etfs):
@@ -897,7 +898,7 @@ def make_animation(metrics: pd.DataFrame, corr: np.ndarray, layouts: list[dict[s
 # ----------------------------------------------------------------------------------------
 
 
-def load_portfolio(path: Path) -> pd.Series:
+def load_portfolio(path: Path, min_holdings: int = 2) -> pd.Series:
     """Read a holdings CSV with columns ``ticker`` and ``weight`` (or ``value``).
 
     Weights can be percentages, fractions or money amounts: they are normalised to sum to 1.
@@ -911,8 +912,8 @@ def load_portfolio(path: Path) -> pd.Series:
     df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
     w = df.groupby("ticker", sort=False)[amount].sum().astype(float)
     w = w[w != 0]
-    if len(w) < 2:
-        raise ValueError("the portfolio needs at least 2 holdings")
+    if len(w) < min_holdings:
+        raise ValueError(f"{path}: the portfolio needs at least {min_holdings} holding(s)")
     if (w < 0).any():
         log.warning("Negative weights (shorts) found: %s", ", ".join(w[w < 0].index))
     return w / w.sum()
@@ -932,8 +933,8 @@ def _risk_split(w: np.ndarray, vol: np.ndarray, corr: np.ndarray) -> tuple[np.nd
     return w * cw / var, cw / (vol * math.sqrt(var))
 
 
-def prepare_portfolio_prices(prices: pd.DataFrame, weights: pd.Series,
-                             cfg: Config) -> tuple[pd.DataFrame, pd.Series]:
+def prepare_portfolio_prices(prices: pd.DataFrame, weights: pd.Series, cfg: Config,
+                             min_holdings: int = 2) -> tuple[pd.DataFrame, pd.Series]:
     """Align holdings + market prices on their common history.
 
     Holdings with no data are dropped (weights rescaled, loudly logged). The history starts
@@ -948,8 +949,8 @@ def prepare_portfolio_prices(prices: pd.DataFrame, weights: pd.Series,
         weights = weights / weights.sum()
         tickers = list(weights.index)
         px = px[tickers + [cfg.market_ticker]]
-    if len(tickers) < 2:
-        raise ValueError("fewer than 2 holdings have price data")
+    if len(tickers) < min_holdings:
+        raise ValueError(f"fewer than {min_holdings} holding(s) have price data")
     first = px.apply(lambda c: c.first_valid_index())
     common_start = first.max()
     late = first[first > first.min() + pd.Timedelta(days=30)]
@@ -1042,6 +1043,8 @@ def portfolio_stress(px: pd.DataFrame, weights: pd.Series, cfg: Config,
 # Crises outside the holdings' common history are skipped automatically.
 CRISES: dict[str, tuple[str, str]] = {
     "2008 financial crisis": ("2007-10-09", "2009-03-09"),
+    "2011 debt-ceiling crisis": ("2011-04-29", "2011-10-03"),
+    "2015-16 China/oil slump": ("2015-05-21", "2016-02-11"),
     "2018 Q4 sell-off": ("2018-09-20", "2018-12-24"),
     "COVID crash 2020": ("2020-02-19", "2020-03-23"),
     "2022 inflation bear": ("2022-01-03", "2022-10-12"),
@@ -1154,9 +1157,11 @@ def plot_crisis_replay(summary: pd.DataFrame, holdings: pd.DataFrame, cfg: Confi
     ax_b.bar(x + 0.2, summary[mk], width=0.38, color="#9a9a9a", label=cfg.market_ticker)
     ax_b.scatter(x - 0.2, summary["max_drawdown_%"], marker="_", s=400, color=INK, zorder=3,
                  label="Portfolio max drawdown")
-    for xi, v in zip(x, summary["portfolio_return_%"]):
-        ax_b.text(xi - 0.2, v, f"{v:.0f}%", ha="center", va="top" if v < 0 else "bottom",
-                  fontsize=8, color=INK)
+    for xi, v, dd in zip(x, summary["portfolio_return_%"], summary["max_drawdown_%"]):
+        # Put the label below the drawdown marker so the two never overlap.
+        y = min(v, dd) if v < 0 else v
+        ax_b.text(xi - 0.2, y - (0.6 if v < 0 else -0.3), f"{v:.0f}%", ha="center",
+                  va="top" if v < 0 else "bottom", fontsize=8, color=INK)
     ax_b.axhline(0, color=INK_MUTED, linewidth=0.8)
     ax_b.set_xticks(x)
     ax_b.set_xticklabels([c.replace(" ", "\n", 1) for c in crises], fontsize=9)
@@ -1409,6 +1414,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="history needed before the panic flag can fire (default 252)")
     p.add_argument("--start", default=None, help="start date (default 2017-01-01 stocks, 1999-01-01 etfs)")
     p.add_argument("--end", default=None, help="end date (default today)")
+    p.add_argument("--compare", type=Path, nargs="+", default=None,
+                   help="folder(s) or CSV files of candidate portfolios to compare side by side")
     p.add_argument("--portfolio", type=Path, default=None,
                    help="holdings CSV (ticker,weight): run the portfolio stress test instead")
     p.add_argument("--crisis-date", default=None,
@@ -1437,7 +1444,8 @@ def main(argv: list[str] | None = None) -> int:
     defaults = UNIVERSE_DEFAULTS[args.universe]
     outdir = args.outdir if args.universe == "stocks" else args.outdir / args.universe
     cfg = Config(universe=dict(UNIVERSES[args.universe]), universe_name=args.universe,
-                 start=args.start or str(defaults["start"]), end=args.end,
+                 start=args.start or ("2004-01-01" if args.compare else str(defaults["start"])),
+                 end=args.end,
                  window=args.window, step=args.step,
                  threshold=args.threshold if args.threshold is not None else float(defaults["threshold"]),
                  mst=args.mst, z_threshold=args.z_threshold,
@@ -1455,6 +1463,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.self_test:
             self_test(cfg)
+        elif args.compare:
+            from compare import run_compare  # local module, imported lazily
+            run_compare(cfg, args.compare, synthetic=args.synthetic)
         elif args.portfolio:
             run_portfolio(cfg, args.portfolio, synthetic=args.synthetic,
                           crisis_date=args.crisis_date)
