@@ -13,29 +13,38 @@ mid-crash or near the bottom. Build towards the first use and test before claimi
 - [x] Default start 2017 so the flag is warmed up before COVID
 - [x] Snapshot panels deduplicated and zoomed to fit; GIF playback speed fixed
 
-## Phase 1: Prove whether it works  ← IN PROGRESS
-- [ ] **1a. Longer, survivorship-free history:** `--universe etfs` uses the 9 original
-      sector SPDR ETFs (XLK XLF XLE XLV XLI XLP XLY XLU XLB), daily since Dec 1998.
-      This covers about 10 stress episodes (2000-02, 2008, 2011, 2015-16, 2018, 2020, 2022, 2025).
-- [ ] **1b. Forward-outcome study:** for each window, measure SPY's next 1-month and
-      3-month return, realised volatility, max drawdown and P(drawdown worse than 10%).
-      Compare correlation flag ON vs OFF, by z-score quintile, and against a plain
-      volatility flag (does correlation add anything beyond volatility?).
-- [ ] Interpret the results and write down the verdict: risk tool, early-warning tool,
-      or just a visual?
+## Phase 1: Prove whether it works  ✅ DONE
+- [x] **1a. Longer, survivorship-free history:** `--universe etfs` (9 original sector SPDRs, 1999+)
+- [x] **1b. Forward-outcome study:** `forward_analysis.csv/png`, comparing flag ON/OFF,
+      correlation quintiles and a plain volatility flag
+- [x] Verdict recorded below
+- [ ] Optional cross-check: run the forward study on the stock universe (2017+)
 
-Prediction before testing: flags predict higher future volatility, but not lower returns.
+### Phase 1 verdict (ETF universe, 1999-2026, 15 flag episodes)
+| Question | Answer | Confidence |
+|---|---|---|
+| Risk gauge? | **Yes, moderately.** Forward 1m SPY vol rises steadily Q1→Q5: 13.1, 13.8, 15.3, 17.0, 21.0%; P(1m drawdown >10%) 3.0% → 9.4% | High (smooth staircase, 20-70 blocks per quintile) |
+| Market-timing tool? | **No.** High correlation came before *higher* 3m returns (Q5 +3.3% vs Q1 +0.9%; flag ON +5.0% vs OFF +2.0%), so selling on it would have hurt | Direction: medium. Size: low (15 episodes) |
+| Does the corr flag beat a plain volatility flag? | **No.** P(3m drawdown >10%): corr flag ON 21% vs OFF 22%; vol flag ON 34.5% vs OFF 19.4% | Medium |
+| Early-warning edge? | **Possible, in combination.** Vol high and corr normal: worst case (3m return −1.1%, P(DD>10%) 55%; likely sector-driven bear markets like 2000-02). Corr high and vol normal: elevated forward vol (1m 24.5% vs 16.1% average) | Low (11-14 episodes): a hypothesis only |
 
-## Phase 2: Make the signal timelier (only if Phase 1 justifies it)
+**Conclusion:** use it to measure diversification and risk regime, never as a sell signal.
+**Plan change:** Phase 3a moves next; Phase 2 is refocused on a combined correlation +
+volatility regime model; Phase 3b (de-risking backtest) is deprioritised and should use
+volatility, not correlation.
+
+## Phase 2: Combined regime model (refocused after Phase 1; do after 3a)
+- [ ] Combined correlation × volatility regimes (e.g. high vol + low corr = dispersed sell-off);
+      test on ETF history with block-level significance (bootstrap over episodes)
 - [ ] Exponentially weighted correlation (less lag, no "fake cliff" when old shocks leave the window)
 - [ ] Absorption-ratio change (Kritzman et al. 2011) as an early-warning candidate
 - [ ] Compare lead times across all Phase 1 stress episodes; keep only what helps
 
-## Phase 3: Make it useful to a person
-- [ ] **3a. Portfolio stress test:** input a holdings CSV, then report the effective
+## Phase 3: Make it useful to a person  ← 3a IN PROGRESS
+- [~] **3a. Portfolio stress test (built, awaiting first real-data run):** `--portfolio holdings.csv`; input a holdings CSV, then report the effective
       number of independent bets, portfolio volatility now vs under crisis correlations
       (e.g. March 2020), and which holdings actually diversify
-- [ ] **3b. Honest backtest of a de-risking rule** vs buy-and-hold: trading costs included,
+- [ ] **3b. (Deprioritised) Honest backtest of a volatility-based de-risking rule** vs buy-and-hold: trading costs included,
       out-of-sample, explicit overfitting check
 
 ## Phase 4: Make it run itself

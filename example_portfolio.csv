@@ -1,0 +1,16 @@
+# Example portfolio for the stress test. Replace with your own holdings.
+# weight can be % (as here), fractions, or money amounts - it is rescaled to 100%.
+ticker,weight
+AAPL,14
+MSFT,12
+NVDA,12
+AMZN,9
+GOOGL,8
+META,6
+TSLA,5
+JPM,6
+JNJ,5
+XOM,5
+KO,4
+GLD,7
+TLT,7

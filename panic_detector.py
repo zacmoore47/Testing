@@ -26,6 +26,7 @@ Usage:
     python panic_detector.py --start 2019-01-01   # shorter history (panic flag misses Mar 2020)
     python panic_detector.py --z-mode expanding   # original all-history panic baseline
     python panic_detector.py --universe etfs      # 9 sector ETFs since 1999 (survivorship-free)
+    python panic_detector.py --portfolio example_portfolio.csv   # portfolio stress test
     python panic_detector.py --help
 
 Outputs (./outputs/ for stocks, ./outputs/etfs/ for --universe etfs):
@@ -220,14 +221,16 @@ def _cache_path(cfg: Config) -> Path:
     return cfg.cache_dir / name
 
 
-def download_prices(cfg: Config) -> pd.DataFrame:
+def download_prices(cfg: Config, tickers: list[str] | None = None,
+                    cache_name: str | None = None) -> pd.DataFrame:
     """Download auto-adjusted closes for the universe plus the market ticker, with CSV cache.
 
+    ``tickers``/``cache_name`` override the universe (used by the portfolio stress test).
     The cache is reused if it contains every requested ticker and covers the requested
     start date. Use ``--refresh`` to force a new download (e.g. to pick up recent days).
     """
-    wanted = cfg.tickers + [cfg.market_ticker]
-    path = _cache_path(cfg)
+    wanted = list(dict.fromkeys((tickers or cfg.tickers) + [cfg.market_ticker]))
+    path = cfg.cache_dir / cache_name if cache_name else _cache_path(cfg)
     if path.exists() and not cfg.refresh:
         cached = pd.read_csv(path, index_col=0, parse_dates=True)
         covers_start = cached.index.min() <= pd.Timestamp(cfg.start) + pd.Timedelta(days=7)
@@ -890,6 +893,261 @@ def make_animation(metrics: pd.DataFrame, corr: np.ndarray, layouts: list[dict[s
 
 
 # ----------------------------------------------------------------------------------------
+# Portfolio stress test (roadmap Phase 3a)
+# ----------------------------------------------------------------------------------------
+
+
+def load_portfolio(path: Path) -> pd.Series:
+    """Read a holdings CSV with columns ``ticker`` and ``weight`` (or ``value``).
+
+    Weights can be percentages, fractions or money amounts: they are normalised to sum to 1.
+    Lines starting with # are ignored. Duplicate tickers are summed.
+    """
+    df = pd.read_csv(path, comment="#", skipinitialspace=True)
+    df.columns = [c.strip().lower() for c in df.columns]
+    amount = next((c for c in ("weight", "value") if c in df.columns), None)
+    if "ticker" not in df.columns or amount is None:
+        raise ValueError(f"{path} needs a 'ticker' column and a 'weight' or 'value' column")
+    df["ticker"] = df["ticker"].astype(str).str.strip().str.upper()
+    w = df.groupby("ticker", sort=False)[amount].sum().astype(float)
+    w = w[w != 0]
+    if len(w) < 2:
+        raise ValueError("the portfolio needs at least 2 holdings")
+    if (w < 0).any():
+        log.warning("Negative weights (shorts) found: %s", ", ".join(w[w < 0].index))
+    return w / w.sum()
+
+
+def _port_vol(w: np.ndarray, vol: np.ndarray, corr: np.ndarray) -> float:
+    """Annualised portfolio volatility from weights, annualised vols and a correlation matrix."""
+    cov = np.outer(vol, vol) * corr
+    return float(np.sqrt(w @ cov @ w))
+
+
+def _risk_split(w: np.ndarray, vol: np.ndarray, corr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-holding share of portfolio variance and correlation with the whole portfolio."""
+    cov = np.outer(vol, vol) * corr
+    cw = cov @ w
+    var = float(w @ cw)
+    return w * cw / var, cw / (vol * math.sqrt(var))
+
+
+def portfolio_stress(prices: pd.DataFrame, weights: pd.Series, cfg: Config,
+                     crisis_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    """Diversification health and crisis stress test for a portfolio.
+
+    Today = the most recent ``cfg.window`` trading days. Crisis = the window with the
+    highest average correlation among the holdings in their common history (or the window
+    ending nearest ``crisis_date``). Scenarios keep today's weights:
+      1. Today: today's volatilities and correlations
+      2. Crisis correlations: today's volatilities, crisis correlations (diversification fails)
+      3. Full crisis repeat: crisis volatilities and correlations
+      4. Worst case: every correlation = 1 (no diversification at all)
+    Effective independent bets = diversification ratio squared (Choueifaty & Coignard):
+    N for N equal-risk uncorrelated holdings, 1 when everything moves together.
+
+    Returns:
+        (scenario table, per-holding table, info dict with dates and summary numbers)
+    """
+    tickers = list(weights.index)
+    px = prices[[t for t in tickers if t in prices.columns] + [cfg.market_ticker]]
+    missing = [t for t in tickers if t not in px.columns or px[t].isna().all()]
+    if missing:
+        log.warning("NO DATA for %s: dropped and the remaining weights rescaled", ", ".join(missing))
+        weights = weights.drop(missing)
+        weights = weights / weights.sum()
+        tickers = list(weights.index)
+        px = px[tickers + [cfg.market_ticker]]
+    if len(tickers) < 2:
+        raise ValueError("fewer than 2 holdings have price data")
+    first = px.apply(lambda c: c.first_valid_index())
+    common_start = first.max()
+    late = first[first > first.min() + pd.Timedelta(days=30)]
+    if not late.empty:
+        log.warning("Common history starts %s because of late listings: %s", common_start.date(),
+                    ", ".join(f"{t} ({d.date()})" for t, d in late.items()))
+    px = px.loc[common_start:].ffill(limit=cfg.ffill_limit).dropna()
+    rets = np.log(px).diff().iloc[1:]
+    if len(rets) < 2 * cfg.window:
+        log.warning("Only %d days of common history: the crisis scenario may not be a real crisis",
+                    len(rets))
+    stock_rets = rets[tickers]
+    w = weights.to_numpy()
+
+    now = stock_rets.iloc[-cfg.window:]
+    vol_now = now.std().to_numpy() * math.sqrt(252)
+    c_now = now.corr().to_numpy()
+
+    dates, corr = rolling_correlations(stock_rets, cfg.window, cfg.step)
+    n = len(tickers)
+    avg = (corr.sum(axis=(1, 2)) - n) / (n * (n - 1))
+    if crisis_date:
+        k = int(pd.DatetimeIndex(dates).get_indexer([pd.Timestamp(crisis_date)], method="nearest")[0])
+    else:
+        k = int(np.argmax(avg))
+    c_crisis = corr[k]
+    end_pos = stock_rets.index.get_loc(dates[k])
+    crisis = stock_rets.iloc[end_pos - cfg.window + 1: end_pos + 1]
+    vol_crisis = crisis.std().to_numpy() * math.sqrt(252)
+
+    scen_inputs = [
+        ("Today", vol_now, c_now),
+        ("Today's vol, crisis correlations", vol_now, c_crisis),
+        ("Full crisis repeat", vol_crisis, c_crisis),
+        ("Worst case: all correlations = 1", vol_now, np.ones((n, n))),
+    ]
+    rows = []
+    for name, v, c in scen_inputs:
+        pv = _port_vol(w, v, c)
+        dr = float(np.abs(w) @ v) / pv
+        rows.append({"scenario": name, "portfolio_vol_%": 100 * pv,
+                     "bad_day_1in20_%": -100 * 1.645 * pv / math.sqrt(252),
+                     "bad_month_1in20_%": -100 * 1.645 * pv / math.sqrt(12),
+                     "independent_bets": dr ** 2,
+                     "avg_corr": (c.sum() - n) / (n * (n - 1))})
+    scen = pd.DataFrame(rows)
+
+    rs_now, cp_now = _risk_split(w, vol_now, c_now)
+    rs_cr, cp_cr = _risk_split(w, vol_now, c_crisis)
+    mkt = rets[cfg.market_ticker].iloc[-cfg.window:]
+    beta = now.apply(lambda col: col.cov(mkt) / mkt.var()).to_numpy()
+    hold = pd.DataFrame({
+        "weight_%": 100 * w,
+        "risk_share_today_%": 100 * rs_now,
+        "risk_share_crisis_corr_%": 100 * rs_cr,
+        "vol_today_%": 100 * vol_now,
+        "beta_to_" + cfg.market_ticker: beta,
+        "corr_to_portfolio_today": cp_now,
+        "corr_to_portfolio_crisis": cp_cr,
+    }, index=pd.Index(tickers, name="ticker")).sort_values("risk_share_today_%", ascending=False)
+    info = {"today_end": stock_rets.index[-1], "crisis_end": pd.Timestamp(dates[k]),
+            "crisis_start": crisis.index[0], "history_start": stock_rets.index[0],
+            "n": n, "weight_effective_n": 1.0 / float(np.sum(w ** 2))}
+    return scen, hold, info
+
+
+def log_portfolio_report(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg: Config) -> None:
+    """Plain-English summary of the portfolio stress test."""
+    t = scen.set_index("scenario")
+    today, cc, full, worst = (t.iloc[i] for i in range(4))
+    log.info("PORTFOLIO STRESS TEST (today = %d days to %s; crisis = %s -> %s; history from %s)",
+             cfg.window, info["today_end"].date(), info["crisis_start"].date(),
+             info["crisis_end"].date(), info["history_start"].date())
+    log.info("  Holdings: %d (effectively %.1f after weighting)", info["n"], info["weight_effective_n"])
+    log.info("  Diversification today: behaves like %.1f independent bets (avg correlation %.2f)",
+             today["independent_bets"], today["avg_corr"])
+    log.info("  Today:                 vol %5.1f%%/yr | 1-in-20 bad day %5.1f%% | bad month %5.1f%%",
+             today["portfolio_vol_%"], today["bad_day_1in20_%"], today["bad_month_1in20_%"])
+    log.info("  Crisis correlations:   vol %5.1f%%/yr (%+.0f%%) | bets %.1f | correlation %.2f",
+             cc["portfolio_vol_%"], 100 * (cc["portfolio_vol_%"] / today["portfolio_vol_%"] - 1),
+             cc["independent_bets"], cc["avg_corr"])
+    log.info("  Full crisis repeat:    vol %5.1f%%/yr | 1-in-20 bad day %5.1f%% | bad month %5.1f%%",
+             full["portfolio_vol_%"], full["bad_day_1in20_%"], full["bad_month_1in20_%"])
+    log.info("  Worst case (corr = 1): vol %5.1f%%/yr", worst["portfolio_vol_%"])
+    top = hold.head(3)
+    log.info("  Biggest risk sources: %s", "; ".join(
+        f"{tk} {r['weight_%']:.0f}% of money -> {r['risk_share_today_%']:.0f}% of risk"
+        for tk, r in top.iterrows()))
+    div = hold.sort_values("corr_to_portfolio_today").head(3)
+    log.info("  Best diversifiers today (lowest correlation to the portfolio): %s", "; ".join(
+        f"{tk} {r['corr_to_portfolio_today']:+.2f} (crisis {r['corr_to_portfolio_crisis']:+.2f})"
+        for tk, r in div.iterrows()))
+    log.info("  Note: bad-day/month figures assume normal returns and understate real crash tails.")
+
+
+def plot_portfolio(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg: Config, path: Path) -> None:
+    """Three panels: money vs risk share, portfolio vol by scenario, correlation today vs crisis."""
+    n = len(hold)
+    fig, axes = plt.subplots(1, 3, figsize=(18, max(5.0, 0.38 * n + 2)),
+                             gridspec_kw={"width_ratios": [1.2, 1, 1.2]})
+    ax_r, ax_s, ax_c = axes
+    for ax in axes:
+        _style_axis(ax)
+
+    order = hold.sort_values("risk_share_today_%")
+    y = np.arange(n)
+    ax_r.barh(y + 0.2, order["weight_%"], height=0.38, color="#9ec5f4", label="Share of money")
+    ax_r.barh(y - 0.2, order["risk_share_today_%"], height=0.38, color="#2a78d6",
+              label="Share of risk (today)")
+    ax_r.set_yticks(y)
+    ax_r.set_yticklabels(order.index, fontsize=9)
+    ax_r.axvline(0, color=INK_MUTED, linewidth=0.8)
+    ax_r.grid(axis="y", visible=False)
+    ax_r.set_xlabel("%", color=INK)
+    ax_r.set_title("Where your risk really comes from", fontsize=11, color=INK, loc="left")
+    ax_r.legend(frameon=False, fontsize=9, loc="lower right")
+
+    names = ["Today", "Crisis\ncorrelations", "Full crisis\nrepeat", "All corr = 1"]
+    vals = scen["portfolio_vol_%"].to_numpy()
+    bars = ax_s.bar(np.arange(len(vals)), vals, color=["#2a78d6", "#eb6834", "#e34948", "#6b6b6b"],
+                    width=0.6)
+    for b, v, bets in zip(bars, vals, scen["independent_bets"]):
+        ax_s.text(b.get_x() + b.get_width() / 2, v, f"{v:.1f}%\n{bets:.1f} bets", ha="center",
+                  va="bottom", fontsize=9, color=INK)
+    ax_s.set_xticks(np.arange(len(vals)))
+    ax_s.set_xticklabels(names, fontsize=9)
+    ax_s.grid(axis="x", visible=False)
+    ax_s.set_ylim(0, vals.max() * 1.25)
+    ax_s.set_ylabel("Portfolio volatility (%/yr)", color=INK)
+    ax_s.set_title(f"Same portfolio, different regimes (crisis = window to "
+                   f"{info['crisis_end']:%Y-%m-%d})", fontsize=11, color=INK, loc="left")
+
+    order_c = hold.sort_values("corr_to_portfolio_today")
+    yc = np.arange(n)
+    ax_c.hlines(yc, order_c["corr_to_portfolio_today"], order_c["corr_to_portfolio_crisis"],
+                color=GRID, linewidth=2)
+    ax_c.plot(order_c["corr_to_portfolio_today"], yc, "o", color="#2a78d6", markersize=8,
+              markeredgecolor="white", label="Today")
+    ax_c.plot(order_c["corr_to_portfolio_crisis"], yc, "o", color="#e34948", markersize=8,
+              markeredgecolor="white", label="Crisis correlations")
+    ax_c.axvline(0, color=INK_MUTED, linewidth=0.8)
+    ax_c.set_yticks(yc)
+    ax_c.set_yticklabels(order_c.index, fontsize=9)
+    ax_c.grid(axis="y", visible=False)
+    ax_c.set_xlim(-1, 1)
+    ax_c.set_xlabel("Correlation with the rest of the portfolio", color=INK)
+    ax_c.set_title("Which holdings actually diversify (left = better)", fontsize=11, color=INK,
+                   loc="left")
+    ax_c.legend(frameon=False, fontsize=9, loc="lower left")
+
+    fig.suptitle(f"Portfolio stress test: {info['n']} holdings, behaving like "
+                 f"{scen['independent_bets'].iloc[0]:.1f} independent bets today",
+                 fontsize=13, color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    log.info("Saved %s", path)
+
+
+def run_portfolio(cfg: Config, portfolio_path: Path, synthetic: bool,
+                  crisis_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load holdings, get prices, run the stress test and write outputs/portfolio/."""
+    weights = load_portfolio(portfolio_path)
+    log.info("Loaded %d holdings from %s", len(weights), portfolio_path)
+    outdir = cfg.outdir / "portfolio"
+    outdir.mkdir(parents=True, exist_ok=True)
+    tickers = list(weights.index)
+    if not synthetic:
+        try:
+            prices = download_prices(cfg, tickers=tickers, cache_name="prices_cache_portfolio.csv")
+        except DataDownloadError as exc:
+            log.error("%s -> falling back to SYNTHETIC data", exc)
+            synthetic = True
+    if synthetic:
+        log.warning("Using SYNTHETIC prices: the portfolio numbers are illustrative only")
+        syn_cfg = Config(universe={"Portfolio": tickers}, start=cfg.start, end=cfg.end,
+                         seed=cfg.seed, market_ticker=cfg.market_ticker)
+        prices, _ = generate_synthetic_prices(syn_cfg)
+    scen, hold, info = portfolio_stress(prices, weights, cfg, crisis_date)
+    scen.to_csv(outdir / "portfolio_scenarios.csv", index=False, float_format="%.3f")
+    hold.to_csv(outdir / "portfolio_holdings.csv", float_format="%.3f")
+    log.info("Saved %s and %s", outdir / "portfolio_scenarios.csv", outdir / "portfolio_holdings.csv")
+    log_portfolio_report(scen, hold, info, cfg)
+    plot_portfolio(scen, hold, info, cfg, outdir / "portfolio_report.png")
+    return scen, hold
+
+
+# ----------------------------------------------------------------------------------------
 # Pipeline / CLI
 # ----------------------------------------------------------------------------------------
 
@@ -977,6 +1235,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="history needed before the panic flag can fire (default 252)")
     p.add_argument("--start", default=None, help="start date (default 2017-01-01 stocks, 1999-01-01 etfs)")
     p.add_argument("--end", default=None, help="end date (default today)")
+    p.add_argument("--portfolio", type=Path, default=None,
+                   help="holdings CSV (ticker,weight): run the portfolio stress test instead")
+    p.add_argument("--crisis-date", default=None,
+                   help="portfolio test: use the window ending nearest this date as the crisis "
+                        "(default: the most correlated window in the holdings' history)")
     p.add_argument("--synthetic", action="store_true", help="use synthetic one-factor data and run the self-test")
     p.add_argument("--self-test", action="store_true", help="run the synthetic self-test only and exit")
     p.add_argument("--refresh", action="store_true", help="ignore the price cache and re-download")
@@ -1018,6 +1281,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.self_test:
             self_test(cfg)
+        elif args.portfolio:
+            run_portfolio(cfg, args.portfolio, synthetic=args.synthetic,
+                          crisis_date=args.crisis_date)
         else:
             run(cfg, synthetic=args.synthetic)
     except AssertionError as exc:
