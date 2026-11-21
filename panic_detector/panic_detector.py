@@ -1075,6 +1075,28 @@ def prepare_portfolio_prices(prices: pd.DataFrame, weights: pd.Series, cfg: Conf
     return px.loc[common_start:].ffill(limit=cfg.ffill_limit).dropna(), weights
 
 
+NORMAL_TAIL = {"q05": -1.645, "q01": -2.326, "cvar05": -2.063}  # standard normal reference
+
+
+def historical_tail_factors(daily_rets: pd.Series) -> dict:
+    """Fat-tail multipliers from the portfolio's own history, in units of its volatility.
+
+    For daily returns and overlapping 21-day ("monthly") returns: the 5% and 1% quantiles and
+    the 5% CVaR (average of the worst 5%), demeaned and divided by the standard deviation.
+    A normal distribution gives -1.645 / -2.326 / -2.063; real portfolios usually show a
+    similar 5% quantile but a much worse 1% quantile and CVaR (fat tails). Multiplying these
+    factors by a scenario's volatility gives tail estimates that keep history's crash shape.
+    """
+    r = daily_rets.dropna()
+    m = np.expm1(np.log1p(r).rolling(21).sum()).dropna()
+    out = {}
+    for label, x in (("day", r), ("month", m)):
+        z = (x - x.mean()) / x.std()
+        q05, q01 = float(z.quantile(0.05)), float(z.quantile(0.01))
+        out[label] = {"q05": q05, "q01": q01, "cvar05": float(z[z <= q05].mean())}
+    return out
+
+
 def portfolio_stress(px: pd.DataFrame, weights: pd.Series, cfg: Config,
                      crisis_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Diversification health and crisis stress test for a portfolio.
@@ -1124,13 +1146,22 @@ def portfolio_stress(px: pd.DataFrame, weights: pd.Series, cfg: Config,
         ("Full crisis repeat", vol_crisis, c_crisis),
         ("Worst case: all correlations = 1", vol_now, np.ones((n, n))),
     ]
+    # Tail estimates: the portfolio's own historical crash shape, scaled to each scenario's
+    # volatility (not the normal distribution, which understates real crashes).
+    port_daily = px[tickers].pct_change().iloc[1:] @ w
+    tail = historical_tail_factors(port_daily)
     rows = []
     for name, v, c in scen_inputs:
         pv = _port_vol(w, v, c)
         dr = float(np.abs(w) @ v) / pv
+        day, month = pv / math.sqrt(252), pv / math.sqrt(12)
         rows.append({"scenario": name, "portfolio_vol_%": 100 * pv,
-                     "bad_day_1in20_%": -100 * 1.645 * pv / math.sqrt(252),
-                     "bad_month_1in20_%": -100 * 1.645 * pv / math.sqrt(12),
+                     "bad_day_1in20_%": 100 * tail["day"]["q05"] * day,
+                     "bad_day_1in100_%": 100 * tail["day"]["q01"] * day,
+                     "avg_worst_day_5%_%": 100 * tail["day"]["cvar05"] * day,
+                     "bad_month_1in20_%": 100 * tail["month"]["q05"] * month,
+                     "bad_month_1in100_%": 100 * tail["month"]["q01"] * month,
+                     "normal_bad_day_1in100_%": 100 * NORMAL_TAIL["q01"] * day,
                      "independent_bets": dr ** 2,
                      "avg_corr": (c.sum() - n) / (n * (n - 1))})
     scen = pd.DataFrame(rows)
@@ -1150,7 +1181,8 @@ def portfolio_stress(px: pd.DataFrame, weights: pd.Series, cfg: Config,
     }, index=pd.Index(tickers, name="ticker")).sort_values("risk_share_today_%", ascending=False)
     info = {"today_end": stock_rets.index[-1], "crisis_end": pd.Timestamp(dates[k]),
             "crisis_start": crisis.index[0], "history_start": stock_rets.index[0],
-            "n": n, "weight_effective_n": 1.0 / float(np.sum(w ** 2))}
+            "n": n, "weight_effective_n": 1.0 / float(np.sum(w ** 2)), "tail": tail,
+            "tail_history_days": int(port_daily.count())}
     return scen, hold, info
 
 
@@ -1346,8 +1378,10 @@ def log_portfolio_report(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg
     log.info("  Best diversifiers today (lowest correlation to the portfolio): %s", "; ".join(
         f"{tk} {r['corr_to_portfolio_today']:+.2f} (crisis {r['corr_to_portfolio_crisis']:+.2f})"
         for tk, r in div.iterrows()))
-    log.info("  Note: bad-day/month figures assume normal returns and understate real crash "
-             "tails; see the crisis replay below for actual historical losses.")
+    tl = info["tail"]["day"]
+    log.info("  Tails use this portfolio's own history (%d days): 1-in-100 day = %.2f x daily "
+             "vol (normal: 2.33 x), so crashes are %.0f%% worse than a normal model implies.",
+             info["tail_history_days"], -tl["q01"], 100 * (tl["q01"] / NORMAL_TAIL["q01"] - 1))
 
 
 def plot_portfolio(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg: Config, path: Path) -> None:

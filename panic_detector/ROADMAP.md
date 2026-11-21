@@ -135,6 +135,18 @@ volatility, not correlation.
       worst 5% weeks, correlation, rise in crises where the portfolio lost, and the effect of
       holding X% (worst drop, volatility, growth cost); verdicts Hedge / Diversifier / No help
       validated on known synthetic cases (opposite mover, unrelated, same mover)
+- [x] **Accuracy upgrades (chosen as most necessary of six proposed):**
+      - Fat-tailed stress estimates: 1-in-20 / 1-in-100 day and month and worst-5% average from
+        the portfolio's own history, scaled to each scenario (was: normal distribution).
+        Validated: reproduces normal factors on normal data, worse 1% tail on t(3) data
+      - Alternative hedges: DBMF, KMLM, CTA, AQMIX (2010+) and a transparent TREND model
+        (12-month time-series momentum on SPY/TLT/GLD/DBC, inverse-vol, 10% vol target,
+        0.85%/yr fee). Validated: hits vol target, profits from persistent trends, no look-ahead
+      - Optimal hedge ratio: min-variance and min-CVaR weights (0-50%), full protection/cost
+        trade-off curve, rolling 3-year min-variance weight to show instability
+      - Deferred by decision: robust covariance (small gain for 3-8 ETFs, no optimiser),
+        regime-based hedging (Phase 1: regimes don't predict returns; overfit risk),
+        options overlays (no free historical option data; premium drag for buy-and-hold)
 - [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification
 
 ## Research track (later, optional)

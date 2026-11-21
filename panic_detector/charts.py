@@ -343,3 +343,48 @@ def return_distribution(ann: dict[str, np.ndarray], names: list[str]) -> alt.Top
         tooltip=[alt.Tooltip("portfolio:N"), alt.Tooltip("ret:Q", title="Average %/yr", format=".1f")])
     zero = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color=AXIS).encode(x="z:Q")
     return style(alt.layer(zero, dens, mean_rules), 300)
+
+
+def hedge_tradeoff(front: pd.DataFrame, w_mv: float, w_cvar: float) -> tuple:
+    """Two charts for weights 0-50%: protection gained (left) and cost (right), vs 0%."""
+    base0 = front.iloc[0]
+    df = pd.DataFrame({
+        "weight": front["weight_%"],
+        "Smaller worst drop": front["maxdd_%"] - base0["maxdd_%"],
+        "Smaller average worst week": front["cvar_wk_%"] - base0["cvar_wk_%"],
+        "Growth per year": front["cagr_%"] - base0["cagr_%"],
+        "Volatility": front["vol_%"] - base0["vol_%"],
+    })
+    marks = pd.DataFrame({"weight": [w_mv, w_cvar], "label": ["min-variance", "min-CVaR"],
+                          "ypx": [4, 18]})  # stacked so the labels never overlap
+
+    def panel(cols: list[str], colors: list[str], title: str):
+        long = df.melt("weight", value_vars=cols, var_name="measure", value_name="pts")
+        lines = alt.Chart(long).mark_line(strokeWidth=2).encode(
+            x=alt.X("weight:Q", title="Hedge weight (%)", axis=alt.Axis(format=".0f")),
+            y=alt.Y("pts:Q", title=title, axis=alt.Axis(format="+.1f")),
+            color=alt.Color("measure:N", scale=alt.Scale(domain=cols, range=colors),
+                            legend=alt.Legend(title=None, columns=1)),
+            tooltip=[alt.Tooltip("weight:Q", title="Weight %", format=".0f"),
+                     alt.Tooltip("measure:N"), alt.Tooltip("pts:Q", format="+.2f")])
+        rules = alt.Chart(marks).mark_rule(color=GREY, strokeDash=[3, 3]).encode(
+            x="weight:Q", tooltip=[alt.Tooltip("label:N"), alt.Tooltip("weight:Q", format=".0f")])
+        labels = alt.Chart(marks).mark_text(align="right", dx=-4, fontSize=10, color=MUTED,
+                                            baseline="top").encode(
+            x="weight:Q", y=alt.Y("ypx:Q", scale=None), text="label:N")
+        zero = alt.Chart(pd.DataFrame({"z": [0]})).mark_rule(color=AXIS).encode(y="z:Q")
+        return style(alt.layer(zero, lines, rules, labels), 280)
+
+    return (panel(["Smaller worst drop", "Smaller average worst week"], [BLUE, "#1baf7a"],
+                  "Protection gained (pts)"),
+            panel(["Growth per year", "Volatility"], [RED, GREY], "Change (pts)"))
+
+
+def rolling_weight(roll: pd.Series) -> alt.TopLevelMixin:
+    df = pd.DataFrame({"date": roll.index, "w": 100 * roll.to_numpy()})
+    line = alt.Chart(df).mark_line(color=BLUE, strokeWidth=1.8).encode(
+        x=alt.X("date:T", title=None, axis=alt.Axis(format="%Y")),
+        y=alt.Y("w:Q", title="Min-variance weight, uncapped (%)", axis=alt.Axis(format=".0f")),
+        tooltip=[alt.Tooltip("date:T", format="%b %Y"), alt.Tooltip("w:Q", title="Weight %", format=".0f")])
+    mean = alt.Chart(pd.DataFrame({"m": [df["w"].mean()]})).mark_rule(color=GREY, strokeDash=[4, 3]).encode(y="m:Q")
+    return style(alt.layer(mean, line), 240)

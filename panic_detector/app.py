@@ -576,17 +576,23 @@ def show_stress(res: dict) -> None:
                     unsafe_allow_html=True)
         chart(ch.scenario_bars(sc))
     with b:
-        st.markdown("<div class='meta'>SCENARIOS · NORMAL-DISTRIBUTION ESTIMATES</div>",
-                    unsafe_allow_html=True)
+        st.markdown("<div class='meta'>SCENARIOS · FAT-TAILED ESTIMATES FROM THIS PORTFOLIO'S HISTORY"
+                    "</div>", unsafe_allow_html=True)
         st.dataframe(pd.DataFrame({
             "Scenario": ["Today", "Crisis correlations", "Full crisis repeat", "All corr = 1"],
             "Vol": sc["portfolio_vol_%"], "1-in-20 day": sc["bad_day_1in20_%"],
-            "1-in-20 month": sc["bad_month_1in20_%"], "Bets": sc["independent_bets"],
-            "Avg ρ": sc["avg_corr"]}), hide_index=True, width="stretch", column_config={
-                "Vol": PCT, "1-in-20 day": PCT, "1-in-20 month": PCT, "Bets": NUM1,
-                "Avg ρ": st.column_config.NumberColumn(format="%.2f")})
-        note("Normal-distribution estimates understate crash tails; the crisis replay below "
-             "uses actual losses.")
+            "1-in-100 day": sc["bad_day_1in100_%"], "Avg worst-5% day": sc["avg_worst_day_5%_%"],
+            "1-in-20 month": sc["bad_month_1in20_%"], "1-in-100 month": sc["bad_month_1in100_%"],
+            "Bets": sc["independent_bets"]}), hide_index=True, width="stretch", column_config={
+                "Vol": PCT, "1-in-20 day": PCT, "1-in-100 day": PCT, "Avg worst-5% day": PCT,
+                "1-in-20 month": PCT, "1-in-100 month": PCT, "Bets": NUM1})
+        tl = res["info"]["tail"]["day"]
+        worse = 100 * (tl["q01"] / pdx.NORMAL_TAIL["q01"] - 1)
+        note(f"Tail shape from {res['info']['tail_history_days']:,} days of this portfolio's history, "
+             f"scaled to each scenario's volatility. Its 1-in-100 day is {-tl['q01']:.2f}× daily "
+             f"volatility vs 2.33× for a normal distribution ({worse:+.0f}%). "
+             "The crisis replay below shows actual losses.")
+
     r = res["replay"]
     if not r.empty:
         section("Crisis replay · actual prices, buy-and-hold from crisis start")
@@ -831,6 +837,44 @@ def show_projections(many: dict) -> None:
 # ---------------------------------------------------------------------------------------
 
 
+def show_hedge_ratio(res: dict) -> None:
+    t = res["table"]
+    section("How much to hold")
+    pick = st.selectbox("Candidate", list(t["ticker"]),
+                        format_func=lambda x: f"{x} · {t.set_index('ticker').at[x, 'what']}")
+    row = t.set_index("ticker").loc[pick]
+    pr, cr = res["series"][pick]
+    front = hg.hedge_frontier(pr, cr)
+    roll = hg.rolling_min_variance(pr, cr)
+    m = st.columns(4)
+    m[0].metric("Min-variance weight (0–50%)", f"{row['minvar_w_%']:.0f}%")
+    m[1].metric("Min-CVaR weight (0–50%)", f"{row['mincvar_w_%']:.0f}%",
+                delta=f"worst drop {row['mincvar_dd_change_pts']:+.1f} pts", delta_color="off",
+                delta_arrow="off")
+    m[2].metric("Growth change at min-CVaR", f"{row['mincvar_cagr_change_pts']:+.2f} pts/yr")
+    if len(roll):
+        m[3].metric("Rolling min-var (uncapped)", f"{100 * roll.min():.0f}–{100 * roll.max():.0f}%",
+                    delta=f"now {100 * roll.iloc[-1]:.0f}%", delta_color="off", delta_arrow="off")
+    left, right = ch.hedge_tradeoff(front, row["minvar_w_%"], row["mincvar_w_%"])
+    a, b = st.columns(2, gap="large")
+    with a:
+        st.markdown("<div class='meta'>PROTECTION GAINED VS NO HEDGE</div>", unsafe_allow_html=True)
+        chart(left)
+    with b:
+        st.markdown("<div class='meta'>COST: GROWTH AND VOLATILITY VS NO HEDGE</div>",
+                    unsafe_allow_html=True)
+        chart(right)
+    if len(roll):
+        st.markdown("<div class='meta'>MIN-VARIANCE WEIGHT RE-ESTIMATED EVERY MONTH ON THE PRIOR 3 "
+                    "YEARS · DASHED = AVERAGE</div>", unsafe_allow_html=True)
+        chart(ch.rolling_weight(roll))
+    note("Weights are searched from 0 to 50% so the hedge stays a sleeve, not the whole portfolio. "
+         "Min-variance often favours whatever is calmest (that is de-risking, not hedging); "
+         "min-CVaR targets the worst weeks directly. Both are estimated on past data, and the "
+         "rolling chart shows how much the 'right' weight moves: treat them as a range, pick a "
+         "round number inside it, and prefer the flat part of the protection curve.")
+
+
 def page_hedges() -> None:
     header("Risk", "Hedge finder",
            "Which assets historically offset this portfolio's losses, and what they cost in "
@@ -881,8 +925,13 @@ def show_hedges(res: dict) -> None:
         "In your worst weeks": t["tail_ret_%"], "Corr.": t["corr"],
         "Up in your losing crises": t["crises_up"], "Worst drop Δ": t["maxdd_change_pts"],
         "Volatility Δ": t["vol_change_pts"], "Growth Δ /yr": t["cagr_change_pts"],
-        "Own growth /yr": t["cagr_%"], "Since": t["since"],
+        "Own growth /yr": t["cagr_%"], "Min-var wt": t["minvar_w_%"],
+        "Min-CVaR wt": t["mincvar_w_%"], "Since": t["since"],
     }), hide_index=True, width="stretch", column_config={
+        "Min-var wt": st.column_config.NumberColumn(format="%.0f%%",
+            help="Weight (0-50%) that minimised the portfolio's variance"),
+        "Min-CVaR wt": st.column_config.NumberColumn(format="%.0f%%",
+            help="Weight (0-50%) that made the average of the worst 5% of weeks least bad"),
         "In your worst weeks": st.column_config.NumberColumn(format="%+.2f%%",
             help="Average weekly return during the portfolio's worst 5% of weeks"),
         "Corr.": st.column_config.NumberColumn(format="%+.2f"),
@@ -914,6 +963,7 @@ def show_hedges(res: dict) -> None:
     if res["skipped"]:
         st.markdown("<div class='meta'>SKIPPED · " + " · ".join(res["skipped"]) + "</div>",
                     unsafe_allow_html=True)
+    show_hedge_ratio(res)
     note("Hedges change with the type of crisis (Treasuries protected in 2008 and 2020 but fell "
          "with stocks in 2022). Prefer candidates that helped across several crises, and weigh "
          "the cost in growth. Analysis of past data, not a recommendation.")
