@@ -83,8 +83,16 @@ volatility, not correlation.
 
 ## Portfolio app track (current priority, replaces the old Phase 4 ordering)
 - [x] **S0. Setup:** project moved into `panic_detector/`; user clones repo and uses `git pull`
-- [~] **S1. Compare mode (built, awaiting first real run):** `--compare portfolios/candidates`; long-run growth/vol/max drawdown, crisis replay per portfolio,
+- [x] **S1. Compare mode:** `--compare portfolios/candidates`; long-run growth/vol/max drawdown, crisis replay per portfolio,
       diversification today vs crisis, concentration; US ETF template portfolios; hindsight warning
+      First real run (2011-01 → 2026-11, limited by VXUS): clear growth-vs-pain staircase:
+      conservative 6.0%/yr, worst drop −18.9% | 60/40 7.2%, −22.3% | stocks+bonds+gold 8.2%, −22.5% |
+      global stocks 10.1%, −34.4% | US stocks 12.9%, −35.0% | tech heavy 16.0%, −32.2%
+      (worst 12m −30.9%, 24-month recovery). No mix was positive in any crisis; bonds cushioned
+      fast crashes (COVID) far more than 2022. **Big caveat:** the window excludes 2000-02 and 2008,
+      the two worst modern crashes, so all drops shown understate what is possible.
+- [ ] **S1+. Longer history via proxies:** splice older look-alike funds before an ETF existed
+      (e.g. VXUS ← VEU/EFA, BND ← AGG) so comparisons include 2008 (and 2000-02 where possible)
 - [ ] **S2. Web app (Streamlit):** edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally
 - [ ] **S3. Daily report:** HTML page with value, daily and total P&L, actual vs target mix
