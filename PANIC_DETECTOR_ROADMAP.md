@@ -46,6 +46,13 @@ volatility, not correlation.
       COVID correlations (vol +64% with no change in volatility). 7 tech names = 66% of money
       but about 90% of risk. XOM/KO/JNJ diversify today, but their correlation jumps to about 0.8 in a crisis;
       only TLT (bonds) diversified in COVID (−0.44)
+      2022 inflation-shock test (window Feb-Jun 2022): bets 1.8, vol +48%. TLT's hedge vanished
+      (crisis corr −0.44 in 2020 → +0.03 in 2022) while XOM/KO held up better (+0.27/+0.36 vs
+      about 0.8 in 2020). Lesson: the hedge depends on the crisis type (deflationary → bonds, inflationary → energy).
+      Limitation found: daily-return correlation misses shared downward drift (TLT ≈ 0 corr
+      in 2022 but fell ~20% alongside stocks)
+- [ ] 3a+ Historical replay: actual portfolio and per-holding return, max drawdown, worst
+      day and worst month inside each crisis window (captures drift that correlation misses)
 - [ ] 3a+ Multiple crisis scenarios in one report (COVID 2020, 2022 inflation shock, 2025 tariffs):
       the crisis type matters (bonds hedged in 2020 but fell with stocks in 2022)
 - [ ] 3a+ Historical (non-normal) bad-day/bad-month estimates from the crisis window, since
