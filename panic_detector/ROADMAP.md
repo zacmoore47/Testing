@@ -110,7 +110,7 @@ volatility, not correlation.
       5-year worst: SBG +1.3, conservative +2.8, 60/40 −0.7, US −6.3, tech −12.5 %/yr.
       No mix containing bonds lost money over any 5- or 10-year period since 2000.
 - [x] Polish: overlapping end labels on the growth chart; long crisis labels on the heatmap
-- [ ] **S2. Web app (Streamlit):** edit candidate portfolios in a table, run the comparison,
+- [~] **S2. Web app (built, awaiting first real run):** `streamlit run app.py`; edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally
 - [ ] **S3. Daily report:** HTML page with value, daily and total P&L, actual vs target mix
       and rebalance flags, market regime, diversification health, crisis exposure, alerts

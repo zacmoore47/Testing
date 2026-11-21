@@ -103,8 +103,12 @@ def long_run_stats(v: pd.Series) -> dict:
     }
 
 
-def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> pd.DataFrame:
-    """Compare candidate portfolios; writes outputs/compare/ and returns the summary table."""
+def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> dict:
+    """Compare candidate portfolios; writes outputs/compare/.
+
+    Returns a dict: summary, crisis_table, rolling_summary, rolling_windows, start, end,
+    proxy_lines, synthetic, and chart paths comparison_png / rolling_png.
+    """
     files = find_portfolio_files(paths)
     ports = {portfolio_name(f): pdx.load_portfolio(f, min_holdings=1) for f in files}
     log.info("Comparing %d portfolios: %s", len(ports), ", ".join(ports))
@@ -187,9 +191,14 @@ def run_compare(cfg: pdx.Config, paths: list[Path], synthetic: bool = False) -> 
         log.info("Saved %s and %s", outdir / "rolling_summary.csv", outdir / "rolling_windows.csv")
         log_rolling(roll_summary, roll_windows)
         plot_rolling(roll_summary, roll_windows, list(ports), outdir / "rolling.png")
+    result = {"summary": summary, "crisis_table": crisis_table, "rolling_summary": roll_summary,
+              "rolling_windows": roll_windows, "start": common_start, "end": prices.index[-1],
+              "proxy_lines": proxy_lines, "synthetic": synthetic,
+              "comparison_png": outdir / "comparison.png",
+              "rolling_png": outdir / "rolling.png" if not roll_summary.empty else None}
     plot_comparison(summary, crisis_table, values, common_start, outdir / "comparison.png",
                     proxy_lines)
-    return summary
+    return result
 
 
 ROLLING_YEARS: tuple[int, ...] = (5, 10)

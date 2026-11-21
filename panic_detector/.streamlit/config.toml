@@ -1,0 +1,6 @@
+# Portfolio Lab runs only on your computer.
+[client]
+toolbarMode = "minimal"      # hides the "Deploy" button so nothing gets published by accident
+
+[browser]
+gatherUsageStats = false     # do not send usage statistics to Streamlit

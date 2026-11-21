@@ -1375,10 +1375,21 @@ def plot_portfolio(scen: pd.DataFrame, hold: pd.DataFrame, info: dict, cfg: Conf
 
 
 def run_portfolio(cfg: Config, portfolio_path: Path, synthetic: bool,
-                  crisis_date: str | None = None) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Load holdings, get prices, run the stress test and write outputs/portfolio/."""
+                  crisis_date: str | None = None) -> dict:
+    """Load holdings from a CSV, then run the stress test (see run_portfolio_weights)."""
     weights = load_portfolio(portfolio_path)
     log.info("Loaded %d holdings from %s", len(weights), portfolio_path)
+    return run_portfolio_weights(cfg, weights, synthetic, crisis_date)
+
+
+def run_portfolio_weights(cfg: Config, weights: pd.Series, synthetic: bool = False,
+                          crisis_date: str | None = None) -> dict:
+    """Stress test + crisis replay for given weights; writes outputs/portfolio/.
+
+    Returns a dict with the tables (scenarios, holdings, info, replay, replay_holdings)
+    and the paths of the two charts (report_png, crises_png).
+    """
+    weights = weights[weights != 0] / weights.sum()
     outdir = cfg.outdir / "portfolio"
     outdir.mkdir(parents=True, exist_ok=True)
     tickers = list(weights.index)
@@ -1415,7 +1426,10 @@ def run_portfolio(cfg: Config, portfolio_path: Path, synthetic: bool,
              outdir / "portfolio_crisis_holdings.csv")
     log_crisis_replay(replay, cfg)
     plot_crisis_replay(replay, replay_hold, cfg, outdir / "portfolio_crises.png")
-    return scen, hold
+    return {"scenarios": scen, "holdings": hold, "info": info, "replay": replay,
+            "replay_holdings": replay_hold, "synthetic": synthetic,
+            "report_png": outdir / "portfolio_report.png",
+            "crises_png": outdir / "portfolio_crises.png"}
 
 
 # ----------------------------------------------------------------------------------------

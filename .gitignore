@@ -3,3 +3,4 @@ __pycache__/
 .venv/
 outputs/
 data/
+panic_detector/portfolios/my/
