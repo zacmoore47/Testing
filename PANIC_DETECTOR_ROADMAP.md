@@ -40,7 +40,7 @@ volatility, not correlation.
 - [ ] Absorption-ratio change (Kritzman et al. 2011) as an early-warning candidate
 - [ ] Compare lead times across all Phase 1 stress episodes; keep only what helps
 
-## Phase 3: Make it useful to a person  ← 3a DONE, upgrades next
+## Phase 3: Make it useful to a person  ← 3a DONE
 - [x] **3a. Portfolio stress test:** `--portfolio holdings.csv`. First real run (example portfolio,
       Nov 2026): 13 holdings behave like 4.0 independent bets today, but only 1.5 under
       COVID correlations (vol +64% with no change in volatility). 7 tech names = 66% of money
@@ -51,12 +51,20 @@ volatility, not correlation.
       about 0.8 in 2020). Lesson: the hedge depends on the crisis type (deflationary → bonds, inflationary → energy).
       Limitation found: daily-return correlation misses shared downward drift (TLT ≈ 0 corr
       in 2022 but fell ~20% alongside stocks)
-- [x] 3a+ Historical replay (built; awaiting real-data run): actual portfolio and per-holding return, max drawdown, worst
+- [x] 3a+ Historical replay: actual portfolio and per-holding return, max drawdown, worst
       day and worst month inside each crisis window (captures drift that correlation misses)
 - [x] 3a+ Multiple crisis scenarios in one report (2008, Q4 2018, COVID, 2022, 2025; skipped if outside history) (COVID 2020, 2022 inflation shock, 2025 tariffs):
       the crisis type matters (bonds hedged in 2020 but fell with stocks in 2022)
 - [x] 3a+ Historical (non-normal) worst day / worst 21 days / max drawdown per crisis from the crisis window, since
       normal approximations understate crash tails
+      **Replay results (example portfolio):** portfolio vs SPY: Q4 2018 −21.0% vs −19.3%,
+      COVID −26.5% vs −33.7%, 2022 −28.2% vs −24.5%, 2025 −19.0% vs −18.8%. Despite 13
+      holdings incl. gold/bonds, it beat SPY in only 1 of 4 crises (tech concentration).
+      Hedges by crisis: TLT +14% COVID but −29% in 2022 (blind spot confirmed); XOM +60%
+      in 2022 but −48% COVID; GLD the most consistent (between −7% and +5%). KO/JNJ held in the slow 2022
+      bear but fell 25-37% in the COVID crash. Real worst day in COVID −9.9%.
+- [ ] Polish: bar labels collide with drawdown markers when return ≈ drawdown
+- [ ] Run on the user's own portfolio
 - [ ] **3b. (Deprioritised) Honest backtest of a volatility-based de-risking rule** vs buy-and-hold: trading costs included,
       out-of-sample, explicit overfitting check
 
