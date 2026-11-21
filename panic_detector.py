@@ -25,10 +25,12 @@ Usage:
     python panic_detector.py --mst --window 120   # MST network, 120-day window
     python panic_detector.py --start 2019-01-01   # shorter history (panic flag misses Mar 2020)
     python panic_detector.py --z-mode expanding   # original all-history panic baseline
+    python panic_detector.py --universe etfs      # 9 sector ETFs since 1999 (survivorship-free)
     python panic_detector.py --help
 
-Outputs (in ./outputs/ by default):
-    metrics.csv, tracking.png, snapshots.png, network.gif
+Outputs (./outputs/ for stocks, ./outputs/etfs/ for --universe etfs):
+    metrics.csv, tracking.png, snapshots.png, network.gif,
+    forward_analysis.csv, forward_analysis.png (what happened to SPY after each window)
 """
 from __future__ import annotations
 
@@ -76,6 +78,34 @@ UNIVERSE: dict[str, list[str]] = {
     "Utilities": ["NEE", "DUK", "SO"],
 }
 
+# Survivorship-free alternative: the 9 original Select Sector SPDR ETFs, trading since
+# Dec 1998. XLRE (2015) and XLC (2018) are excluded to keep the full history. Caveat: GICS
+# reclassifications (e.g. 2018: GOOGL/META moved from XLK/XLY into XLC) change what an ETF
+# holds over time.
+ETF_UNIVERSE: dict[str, list[str]] = {
+    "Information Technology": ["XLK"],
+    "Financials": ["XLF"],
+    "Energy": ["XLE"],
+    "Health Care": ["XLV"],
+    "Industrials": ["XLI"],
+    "Consumer Staples": ["XLP"],
+    "Consumer Discretionary": ["XLY"],
+    "Utilities": ["XLU"],
+    "Materials": ["XLB"],
+}
+
+UNIVERSES: dict[str, dict[str, list[str]]] = {"stocks": UNIVERSE, "etfs": ETF_UNIVERSE}
+# Per-universe defaults. Sector ETFs are diversified portfolios, so their correlations run
+# much higher than single stocks (calm ~0.5-0.6); a higher edge threshold keeps the network
+# readable.
+UNIVERSE_DEFAULTS: dict[str, dict[str, object]] = {
+    "stocks": {"start": "2017-01-01", "threshold": 0.5},
+    "etfs": {"start": "1999-01-01", "threshold": 0.8},
+}
+
+# Forward-outcome horizons in trading days (about 1 and 3 months).
+FORWARD_HORIZONS: tuple[int, ...] = (21, 63)
+
 # Fixed sector -> colour mapping (colour follows the entity, never its rank). The first
 # eight are a CVD-checked categorical palette; 11 sectors exceed it, so the last three are
 # extra muted hues and every node also carries its ticker label (identity is never
@@ -96,6 +126,15 @@ SECTOR_COLORS: dict[str, str] = {
 
 # Known stress events annotated on the tracking chart.
 STRESS_EVENTS: dict[str, str] = {
+    "2000-04-14": "Dot-com crash",
+    "2001-09-17": "9/11",
+    "2002-07-23": "2002 low",
+    "2008-09-15": "Lehman",
+    "2010-05-06": "Flash crash",
+    "2011-08-08": "US downgrade",
+    "2015-08-24": "China deval.",
+    "2018-02-05": "Volmageddon",
+    "2018-12-24": "Q4 2018 low",
     "2020-03-16": "COVID crash",
     "2022-06-13": "2022 rate shock",
     "2024-08-05": "Yen-carry unwind",
@@ -117,6 +156,7 @@ class Config:
     """All tunable parameters in one place."""
 
     universe: dict[str, list[str]] = field(default_factory=lambda: dict(UNIVERSE))
+    universe_name: str = "stocks"  # "stocks" or "etfs" (sets cache file and labels)
     market_ticker: str = "SPY"
     start: str = "2017-01-01"  # 2 years before COVID so the panic flag is warmed up
     end: str | None = None  # None = today
@@ -136,8 +176,10 @@ class Config:
     cache_dir: Path = Path("data")
     refresh: bool = False  # ignore cache and re-download
     make_gif: bool = True
-    gif_stride: int = 1  # use every k-th window as a GIF frame (1 = every window step)
-    fps: int = 8
+    gif_stride: int | None = None  # every k-th window as a GIF frame; None = auto (~240 frames)
+    fps: int = 12
+    horizons: tuple[int, ...] = FORWARD_HORIZONS  # forward-outcome horizons, trading days
+    dd_level: float = 0.10  # forward study: probability of a drawdown worse than this
 
     @property
     def tickers(self) -> list[str]:
@@ -174,7 +216,8 @@ class DataDownloadError(RuntimeError):
 
 
 def _cache_path(cfg: Config) -> Path:
-    return cfg.cache_dir / "prices_cache.csv"
+    name = "prices_cache.csv" if cfg.universe_name == "stocks" else f"prices_cache_{cfg.universe_name}.csv"
+    return cfg.cache_dir / name
 
 
 def download_prices(cfg: Config) -> pd.DataFrame:
@@ -306,7 +349,7 @@ def clean_prices(prices: pd.DataFrame, cfg: Config) -> tuple[pd.DataFrame, pd.Se
         raise ValueError(f"only {len(panel)} clean rows; need more than window={cfg.window}")
 
     rets = np.log(panel[stocks.columns]).diff().iloc[1:]
-    log.info("Clean data: %d stocks x %d daily returns (%s -> %s)", rets.shape[1], len(rets),
+    log.info("Clean data: %d assets x %d daily returns (%s -> %s)", rets.shape[1], len(rets),
              rets.index[0].date(), rets.index[-1].date())
     return rets, panel["__mkt__"].loc[rets.index]
 
@@ -347,7 +390,9 @@ def compute_metrics(returns: pd.DataFrame, market: pd.Series, cfg: Config) -> tu
     """Compute rolling network metrics and the panic flag.
 
     Columns: avg_corr, top_eig, top_eig_share, mp_bound, n_edges, spy_drawdown,
-    plus avg_corr_z (z-score vs. a trailing baseline) and panic (bool flag).
+    plus avg_corr_z (z-score vs. a trailing baseline) and panic (bool flag), and a
+    benchmark volatility flag: trailing_vol (annualised SPY vol over the same window),
+    vol_z and vol_panic, built exactly like the correlation flag.
 
     Returns:
         (metrics DataFrame indexed by window end date, correlation stack (W, N, N)).
@@ -387,6 +432,15 @@ def compute_metrics(returns: pd.DataFrame, market: pd.Series, cfg: Config) -> tu
     base_mean, base_std = zscore_baseline(df["avg_corr"], cfg)
     df["avg_corr_z"] = (df["avg_corr"] - base_mean) / base_std
     df["panic"] = df["avg_corr_z"] > cfg.z_threshold
+
+    # Benchmark: the same flag built on plain market volatility. If the correlation flag
+    # adds nothing beyond this, the network machinery is not earning its keep.
+    mret = np.log(market).diff()
+    tvol = mret.rolling(cfg.window).std() * math.sqrt(252)
+    df["trailing_vol"] = tvol.reindex(dates).to_numpy()
+    v_mean, v_std = zscore_baseline(df["trailing_vol"], cfg)
+    df["vol_z"] = (df["trailing_vol"] - v_mean) / v_std
+    df["vol_panic"] = df["vol_z"] > cfg.z_threshold
     return df, corr
 
 
@@ -406,6 +460,136 @@ def zscore_baseline(series: pd.Series, cfg: Config) -> tuple[pd.Series, pd.Serie
     else:
         raise ValueError(f"unknown z_mode {cfg.z_mode!r}")
     return roll.mean(), roll.std()
+
+
+def forward_outcomes(market: pd.Series, dates: pd.DatetimeIndex,
+                     horizons: tuple[int, ...]) -> pd.DataFrame:
+    """What happened to the market AFTER each window end date (these are outcomes, not inputs).
+
+    For each horizon h (trading days) and each date t:
+        fwd_ret_{h}d: simple return from t to t+h
+        fwd_vol_{h}d: annualised realised volatility of daily log returns over t+1..t+h
+        fwd_mdd_{h}d: worst peak-to-trough drawdown within t..t+h (negative number)
+    Dates without h days of future data get NaN.
+    """
+    p = market.to_numpy(dtype=float)
+    n = len(p)
+    r = pd.Series(np.diff(np.log(p), prepend=np.nan))
+    pos = market.index.get_indexer(dates)
+    out: dict[str, np.ndarray] = {}
+    for h in horizons:
+        ret = np.full(n, np.nan)
+        mdd = np.full(n, np.nan)
+        if n > h:
+            ret[: n - h] = p[h:] / p[: n - h] - 1.0
+            win = np.lib.stride_tricks.sliding_window_view(p, h + 1)  # (n-h, h+1)
+            mdd[: n - h] = (win / np.maximum.accumulate(win, axis=1) - 1.0).min(axis=1)
+        vol = (r.rolling(h).std().shift(-h) * math.sqrt(252)).to_numpy()
+        out[f"fwd_ret_{h}d"] = ret[pos]
+        out[f"fwd_vol_{h}d"] = vol[pos]
+        out[f"fwd_mdd_{h}d"] = mdd[pos]
+    return pd.DataFrame(out, index=dates)
+
+
+def summarize_forward(df: pd.DataFrame, cfg: Config) -> pd.DataFrame:
+    """Compare forward outcomes across flag states and correlation z-score quintiles.
+
+    Only windows where both flags are live (warm-up finished) are used. ``blocks`` counts
+    contiguous runs of each group: overlapping windows are not independent, so blocks (not
+    windows) is the honest sample size, especially for the flag-ON groups.
+    """
+    live = df[df["avg_corr_z"].notna() & df["vol_z"].notna()].copy()
+    labels = [f"Corr z Q{i}" + (" (lowest)" if i == 1 else " (highest)" if i == 5 else "")
+              for i in range(1, 6)]
+    quint = pd.qcut(live["avg_corr_z"], 5, labels=labels)
+    groups: dict[str, pd.Series] = {
+        "All windows (flags live)": pd.Series(True, index=live.index),
+        "Corr flag ON": live["panic"],
+        "Corr flag OFF": ~live["panic"],
+        "Vol flag ON": live["vol_panic"],
+        "Vol flag OFF": ~live["vol_panic"],
+        "Corr ON, vol OFF": live["panic"] & ~live["vol_panic"],
+        "Vol ON, corr OFF": live["vol_panic"] & ~live["panic"],
+    }
+    for lab in labels:
+        groups[lab] = quint == lab
+
+    rows = []
+    for h in cfg.horizons:
+        ret, vol, mdd = (f"fwd_ret_{h}d", f"fwd_vol_{h}d", f"fwd_mdd_{h}d")
+        has_future = live[ret].notna()
+        for name, mask in groups.items():
+            m = mask.astype(bool) & has_future
+            sub = live.loc[m]
+            rows.append({
+                "horizon": f"{h}d",
+                "group": name,
+                "windows": int(m.sum()),
+                "blocks": len(_runs(m)),
+                "ret_mean_%": 100 * sub[ret].mean(),
+                "ret_median_%": 100 * sub[ret].median(),
+                "vol_mean_%": 100 * sub[vol].mean(),
+                "mdd_mean_%": 100 * sub[mdd].mean(),
+                f"p_dd>{cfg.dd_level:.0%}_%": 100 * (sub[mdd] < -cfg.dd_level).mean(),
+            })
+    return pd.DataFrame(rows)
+
+
+def log_forward_summary(summary: pd.DataFrame, cfg: Config) -> None:
+    """Print the forward study as readable tables plus the headline comparisons."""
+    pd.set_option("display.width", 200)
+    for h in cfg.horizons:
+        tab = summary[summary["horizon"] == f"{h}d"].drop(columns="horizon")
+        log.info("Forward outcomes for %s over the next %d trading days (~%d month%s):\n%s",
+                 cfg.market_ticker, h, round(h / 21), "" if h <= 21 else "s",
+                 tab.to_string(index=False, float_format=lambda x: f"{x:7.1f}"))
+    h = max(cfg.horizons)
+    tab = summary[summary["horizon"] == f"{h}d"].set_index("group")
+    pcol = f"p_dd>{cfg.dd_level:.0%}_%"
+    on, off = tab.loc["Corr flag ON"], tab.loc["Corr flag OFF"]
+    if on["windows"] == 0:
+        log.info("Headline: the correlation flag never fired while forward data was available")
+        return
+    log.info("Headline (%dd): corr flag ON vs OFF -> forward vol %.1f%% vs %.1f%%, "
+             "mean return %.1f%% vs %.1f%%, P(drawdown > %.0f%%) %.0f%% vs %.0f%% "
+             "[ON sample: %d windows in only %d independent blocks]",
+             h, on["vol_mean_%"], off["vol_mean_%"], on["ret_mean_%"], off["ret_mean_%"],
+             100 * cfg.dd_level, on[pcol], off[pcol], on["windows"], on["blocks"])
+
+
+def plot_forward(summary: pd.DataFrame, cfg: Config, path: Path) -> None:
+    """Forward vol, return and drawdown probability by correlation z-score quintile."""
+    q = summary[summary["group"].str.startswith("Corr z Q")]
+    pcol = f"p_dd>{cfg.dd_level:.0%}_%"
+    panels = [("vol_mean_%", f"Forward {cfg.market_ticker} volatility (ann. %)"),
+              ("ret_mean_%", f"Forward {cfg.market_ticker} return (%)"),
+              (pcol, f"P(drawdown worse than {cfg.dd_level:.0%}) (%)")]
+    colors = ["#2a78d6", "#eb6834"]
+    groups = list(dict.fromkeys(q["group"]))
+    x = np.arange(len(groups))
+    width = 0.38
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    for ax, (col, title) in zip(axes, panels):
+        _style_axis(ax)
+        ax.grid(axis="x", visible=False)
+        for k, h in enumerate(cfg.horizons):
+            vals = q[q["horizon"] == f"{h}d"].set_index("group").reindex(groups)[col]
+            ax.bar(x + (k - 0.5) * width, vals.to_numpy(), width=width - 0.04,
+                   color=colors[k % len(colors)], label=f"next {h} days (~{round(h / 21)}m)")
+        ax.axhline(0, color=INK_MUTED, linewidth=0.8)
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"Q{i + 1}" for i in range(len(groups))])
+        ax.set_xlabel("Correlation z-score quintile (Q1 = calmest, Q5 = most stressed)",
+                      color=INK, fontsize=9)
+        ax.set_title(title, fontsize=10, color=INK, loc="left")
+    axes[0].legend(frameon=False, fontsize=9, loc="upper left")
+    fig.suptitle(f"What happened next? {cfg.universe_name} universe, {cfg.window}-day correlation "
+                 f"({len(q) // max(len(cfg.horizons), 1)} quintiles, overlapping windows)",
+                 fontsize=12, color=INK)
+    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.savefig(path, dpi=130)
+    plt.close(fig)
+    log.info("Saved %s", path)
 
 
 def check_regime_response(metrics: pd.DataFrame, stress: tuple[pd.Timestamp, pd.Timestamp],
@@ -531,7 +715,7 @@ def draw_network(ax: plt.Axes, g: nx.Graph, pos: dict[str, np.ndarray], sector_o
     ax.clear()
     nodes = list(g.nodes)
     deg = np.array([g.degree(v) for v in nodes], dtype=float)
-    sizes = 30 + 170 * deg / max(deg.max(), 1) if mst else 30 + 3 * deg
+    sizes = 30 + 170 * deg / max(deg.max(), 1) if mst else 30 + 120 * deg / max(len(nodes) - 1, 1)
     if g.number_of_edges():
         w = np.array([d["weight"] for _, _, d in g.edges(data=True)])
         lo = -1.0 if mst else threshold
@@ -649,7 +833,7 @@ def plot_tracking(metrics: pd.DataFrame, market: pd.Series, cfg: Config, path: P
             continue
         for ax in axes:
             ax.axvline(ts, color=INK, linewidth=0.8, linestyle=":", alpha=0.7)
-        ax_px.text(ts, 0.97 - 0.07 * (k % 2), f" {label}", transform=ax_px.get_xaxis_transform(),
+        ax_px.text(ts, 0.97 - 0.07 * (k % 3), f" {label}", transform=ax_px.get_xaxis_transform(),
                    ha="left", va="top", fontsize=8, color=INK,
                    bbox={"facecolor": "white", "edgecolor": "none", "alpha": 0.8, "pad": 1})
 
@@ -666,7 +850,8 @@ def plot_tracking(metrics: pd.DataFrame, market: pd.Series, cfg: Config, path: P
 def make_animation(metrics: pd.DataFrame, corr: np.ndarray, layouts: list[dict[str, np.ndarray]],
                    tickers: list[str], cfg: Config, lim: float, path: Path) -> None:
     """GIF: network per window step, with a time-series strip and a moving marker."""
-    frames = list(range(0, len(metrics), max(1, cfg.gif_stride)))
+    stride = cfg.gif_stride or max(1, math.ceil(len(metrics) / 240))
+    frames = list(range(0, len(metrics), max(1, stride)))
     fig = plt.figure(figsize=(7, 8.2))
     gs = fig.add_gridspec(2, 1, height_ratios=[5, 1.1], hspace=0.08)
     ax_net = fig.add_subplot(gs[0])
@@ -697,7 +882,8 @@ def make_animation(metrics: pd.DataFrame, corr: np.ndarray, layouts: list[dict[s
         return ()
 
     anim = FuncAnimation(fig, update, frames=frames, blit=False)
-    log.info("Rendering GIF with %d frames (this can take a minute)...", len(frames))
+    log.info("Rendering GIF with %d frames (every %d windows, ~%.0f s playback)...",
+             len(frames), stride, len(frames) / cfg.fps)
     anim.save(path, writer=PillowWriter(fps=cfg.fps), dpi=72)
     plt.close(fig)
     log.info("Saved %s", path)
@@ -728,6 +914,7 @@ def run(cfg: Config, synthetic: bool) -> pd.DataFrame:
         check_regime_response(metrics, stress, cfg)
 
     tickers = list(returns.columns)
+    metrics = metrics.join(forward_outcomes(market, metrics.index, cfg.horizons))
     metrics_path = cfg.outdir / "metrics.csv"
     metrics.to_csv(metrics_path, float_format="%.6f")
     log.info("Saved %s", metrics_path)
@@ -746,6 +933,12 @@ def run(cfg: Config, synthetic: bool) -> pd.DataFrame:
         run_ = run_[run_["panic"]]
         log.info("  panic period: %s -> %s (peak avg ρ %.2f)", s.date(),
                  run_.index[-1].date(), run_["avg_corr"].max())
+
+    summary = summarize_forward(metrics, cfg)
+    summary.to_csv(cfg.outdir / "forward_analysis.csv", index=False, float_format="%.3f")
+    log.info("Saved %s", cfg.outdir / "forward_analysis.csv")
+    log_forward_summary(summary, cfg)
+    plot_forward(summary, cfg, cfg.outdir / "forward_analysis.png")
 
     log.info("Computing %d network layouts...", len(metrics))
     layouts = compute_layouts(corr, tickers, cfg.seed)
@@ -770,7 +963,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Market panic detector via rolling correlation networks.")
     p.add_argument("--window", type=int, default=90, help="rolling window, trading days (default 90)")
     p.add_argument("--step", type=int, default=5, help="step between windows, trading days (default 5)")
-    p.add_argument("--threshold", type=float, default=0.5, help="edge threshold on correlation (default 0.5)")
+    p.add_argument("--universe", choices=sorted(UNIVERSES), default="stocks",
+                   help="stocks: 41 large caps since 2017; etfs: 9 sector ETFs since 1999")
+    p.add_argument("--threshold", type=float, default=None,
+                   help="edge threshold on correlation (default 0.5 stocks, 0.8 etfs)")
     p.add_argument("--mst", action="store_true", help="draw the minimum spanning tree instead of a threshold graph")
     p.add_argument("--z-threshold", type=float, default=1.5, help="panic flag z-score threshold (default 1.5)")
     p.add_argument("--z-mode", choices=["rolling", "expanding"], default="rolling",
@@ -779,14 +975,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                    help="rolling baseline length in trading days (default 504 = ~2 years)")
     p.add_argument("--z-min-days", type=int, default=252,
                    help="history needed before the panic flag can fire (default 252)")
-    p.add_argument("--start", default="2017-01-01", help="start date (default 2017-01-01)")
+    p.add_argument("--start", default=None, help="start date (default 2017-01-01 stocks, 1999-01-01 etfs)")
     p.add_argument("--end", default=None, help="end date (default today)")
     p.add_argument("--synthetic", action="store_true", help="use synthetic one-factor data and run the self-test")
     p.add_argument("--self-test", action="store_true", help="run the synthetic self-test only and exit")
     p.add_argument("--refresh", action="store_true", help="ignore the price cache and re-download")
     p.add_argument("--no-gif", action="store_true", help="skip the (slow) GIF animation")
-    p.add_argument("--gif-stride", type=int, default=1, help="use every k-th window as a GIF frame (default 1)")
-    p.add_argument("--fps", type=int, default=8, help="GIF frames per second (default 8)")
+    p.add_argument("--gif-stride", type=int, default=None,
+                   help="use every k-th window as a GIF frame (default: auto, ~240 frames)")
+    p.add_argument("--fps", type=int, default=12, help="GIF frames per second (default 12)")
     p.add_argument("--outdir", type=Path, default=Path("outputs"), help="output directory (default ./outputs)")
     p.add_argument("--cache-dir", type=Path, default=Path("data"), help="price cache directory (default ./data)")
     p.add_argument("-v", "--verbose", action="store_true", help="debug logging")
@@ -800,11 +997,16 @@ def main(argv: list[str] | None = None) -> int:
     for noisy in ("matplotlib", "PIL", "yfinance", "peewee", "urllib3"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
-    cfg = Config(start=args.start, end=args.end, window=args.window, step=args.step,
-                 threshold=args.threshold, mst=args.mst, z_threshold=args.z_threshold,
+    defaults = UNIVERSE_DEFAULTS[args.universe]
+    outdir = args.outdir if args.universe == "stocks" else args.outdir / args.universe
+    cfg = Config(universe=dict(UNIVERSES[args.universe]), universe_name=args.universe,
+                 start=args.start or str(defaults["start"]), end=args.end,
+                 window=args.window, step=args.step,
+                 threshold=args.threshold if args.threshold is not None else float(defaults["threshold"]),
+                 mst=args.mst, z_threshold=args.z_threshold,
                  z_mode=args.z_mode, z_lookback_days=args.z_lookback_days,
                  z_min_days=args.z_min_days,
-                 outdir=args.outdir, cache_dir=args.cache_dir, refresh=args.refresh,
+                 outdir=outdir, cache_dir=args.cache_dir, refresh=args.refresh,
                  make_gif=not args.no_gif, gif_stride=args.gif_stride, fps=args.fps)
     if cfg.window < 10 or cfg.step < 1:
         log.error("window must be >= 10 and step >= 1")
