@@ -110,9 +110,9 @@ volatility, not correlation.
       5-year worst: SBG +1.3, conservative +2.8, 60/40 −0.7, US −6.3, tech −12.5 %/yr.
       No mix containing bonds lost money over any 5- or 10-year period since 2000.
 - [x] Polish: overlapping end labels on the growth chart; long crisis labels on the heatmap
-- [~] **S2. Web app (built, awaiting first real run):** `streamlit run app.py`; edit candidate portfolios in a table, run the comparison,
+- [x] **S2. Web app (real-data verified Nov 2026):** `streamlit run app.py`; edit candidate portfolios in a table, run the comparison,
       enter real holdings (shares, amount invested, target weight, cash), saved locally
-- [~] **S3. Daily report (built, awaiting first real run):** `--report portfolios/my/<file>.csv` or the app's Daily report page; HTML page with value, daily and total P&L, actual vs target mix
+- [x] **S3. Daily report (real-data verified Nov 2026):** `--report portfolios/my/<file>.csv` or the app's Daily report page; HTML page with value, daily and total P&L, actual vs target mix
       and rebalance flags, market regime, diversification health, crisis exposure, alerts
       only on change; daily value history
 - [x] **UI redesign:** minimal "quant desk" style: IBM Plex Sans/Mono, monochrome + one accent,
@@ -147,6 +147,11 @@ volatility, not correlation.
       - Deferred by decision: robust covariance (small gain for 3-8 ETFs, no optimiser),
         regime-based hedging (Phase 1: regimes don't predict returns; overfit risk),
         options overlays (no free historical option data; premium drag for buy-and-hold)
+- [x] **Real-data verification (Nov 24 2026):** Yahoo allowed in a personal "Testing" cloud
+      environment; compare, projections, hedges, valuation, rebalance, stress test and report
+      all run on live prices. Found and fixed: hedge verdicts treated every crisis equally, so
+      trend-following (+24% in 2008, +11% in 2022, but losing in short V-shaped sell-offs) was
+      under-rated; added a "big crises" test (portfolio lost >15%, need 2+ such crises)
 - [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification
 
 ## Research track (later, optional)

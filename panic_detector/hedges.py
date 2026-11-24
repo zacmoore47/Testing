@@ -7,6 +7,7 @@ the period both histories overlap:
                     (positive = it tended to rise exactly when you were losing most)
     correlation     weekly correlation with the portfolio
     crises up       in the named crises where YOUR portfolio lost money, how often it rose
+    big crises up   the same, for crises where your portfolio lost more than 15%
     blend effect    what holding X% of it (the rest pro rata in your portfolio, rebalanced)
                     would have done to the worst drop, volatility and growth per year
 
@@ -52,6 +53,7 @@ MODEL_TICKERS = {"TREND"}  # computed here, not downloaded
 TREND_ASSETS = ["SPY", "TLT", "GLD", "DBC"]
 TREND_FEE = 0.85  # %/yr, roughly what managed-futures ETFs charge
 MIN_DD_GAIN = 1.0  # points of worst-drop improvement needed to count as helping (noise floor)
+BIG_CRISIS = -15.0  # a "big crisis" = the portfolio lost more than 15% (start to market trough)
 NOTES = {
     "SH": "Inverse funds lose value over time in rising markets and with daily resets; a "
           "short-term tool, not a buy-and-hold hedge.",
@@ -171,6 +173,7 @@ def analyse(weights: pd.Series, cfg: pdx.Config, add_pct: float = 10.0,
         v_blend = (1 + (1 - a) * pr + a * cr).cumprod()
 
         crisis_rets = {}  # candidate return in crises where the PORTFOLIO lost money
+        big_rets = {}  # ... and in crises where it lost more than 15%
         for name, (cs, ce) in pdx.CRISES.items():
             cs, ce = pd.Timestamp(cs), pd.Timestamp(ce)
             if cs < pr.index[0] or ce > pr.index[-1]:
@@ -180,6 +183,8 @@ def analyse(weights: pd.Series, cfg: pdx.Config, add_pct: float = 10.0,
             seg_b = (1 + ((1 - a) * pr + a * cr).loc[cs:ce]).prod() - 1
             if seg_p < 0:
                 crisis_rets[name] = seg_c
+            if 100 * seg_p <= BIG_CRISIS:
+                big_rets[name] = seg_c
             crisis_rows.append({"ticker": c, "crisis": name, "ret": 100 * seg_c,
                                 "portfolio": 100 * seg_p, "blend": 100 * seg_b})
         series[c] = (pr, cr)
@@ -190,9 +195,16 @@ def analyse(weights: pd.Series, cfg: pdx.Config, add_pct: float = 10.0,
         up = sum(1 for x in crisis_rets.values() if x > 0)
         dd_gain = 100 * (_mdd(v_blend) - _mdd(v_port))
         tail = 100 * wk_c[worst].mean()
-        # Hedge: rose in your worst weeks, cut the worst drop, and (where history has
-        # crises in which you lost money) rose in most of them.
-        if tail > 0 and dd_gain >= MIN_DD_GAIN and (n_cr == 0 or up / n_cr >= 0.6):
+        n_big = len(big_rets)
+        big_up = sum(1 for x in big_rets.values() if x > 0)
+        # Hedge: cut the worst drop AND either (a) rose in your worst weeks and in most
+        # crises where you lost money, or (b) rose in at least 2/3 of your BIG crises
+        # (lost > 15%), with at least two of them in its history. (b) recognises hedges
+        # like trend-following that lose in short, sharp sell-offs but pay off in the long,
+        # deep crises that matter most.
+        broad = tail > 0 and (n_cr == 0 or up / n_cr >= 0.6)
+        big = n_big >= 2 and big_up / n_big >= 2 / 3
+        if dd_gain >= MIN_DD_GAIN and (broad or big):
             verdict = "Hedge"
         elif dd_gain >= MIN_DD_GAIN:
             verdict = "Diversifier"  # softened the worst drop without rising in sell-offs
@@ -205,6 +217,7 @@ def analyse(weights: pd.Series, cfg: pdx.Config, add_pct: float = 10.0,
             "corr": float(wk_c.corr(wk_p)),
             "crises_up": f"{up}/{n_cr}" if n_cr else "n/a",
             "crises_up_share": up / n_cr if n_cr else np.nan,
+            "big_crises_up": f"{big_up}/{n_big}" if n_big else "n/a",
             "cagr_%": 100 * _cagr(v_c),
             "maxdd_change_pts": dd_gain,
             "vol_change_pts": 100 * math.sqrt(252) * (((1 - a) * pr + a * cr).std() - pr.std()),

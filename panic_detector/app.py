@@ -923,7 +923,8 @@ def show_hedges(res: dict) -> None:
     st.dataframe(pd.DataFrame({
         "Ticker": t["ticker"], "What": t["what"], "Verdict": t["verdict"],
         "In your worst weeks": t["tail_ret_%"], "Corr.": t["corr"],
-        "Up in your losing crises": t["crises_up"], "Worst drop Δ": t["maxdd_change_pts"],
+        "Up in your losing crises": t["crises_up"], "Up in big crises (>15% loss)": t["big_crises_up"],
+        "Worst drop Δ": t["maxdd_change_pts"],
         "Volatility Δ": t["vol_change_pts"], "Growth Δ /yr": t["cagr_change_pts"],
         "Own growth /yr": t["cagr_%"], "Min-var wt": t["minvar_w_%"],
         "Min-CVaR wt": t["mincvar_w_%"], "Since": t["since"],
@@ -941,9 +942,11 @@ def show_hedges(res: dict) -> None:
         "Growth Δ /yr": st.column_config.NumberColumn(format="%+.2f",
             help="Change in growth per year: the cost of holding the hedge"),
         "Own growth /yr": PCT})
-    note("Hedge = rose in your worst weeks, cut the worst drop and rose in most crises where "
-         "you lost money. Diversifier = softened the worst drop without rising. Deltas compare "
-         "the portfolio with and without the candidate over the same years.")
+    note("Hedge = cut the worst drop and either rose in your worst weeks and most losing crises, "
+         "or rose in at least 2/3 of your BIG crises (portfolio lost >15%; needs 2+ in its "
+         "history). Diversifier = softened the worst drop without rising. Deltas compare the "
+         "portfolio with and without the candidate over the same years, which differ by "
+         "candidate (see Since).")
     for tk, txt in [(r["ticker"], r["note"]) for _, r in t.iterrows() if r["note"]]:
         st.markdown(f"<div class='meta'>{tk} · {txt}</div>", unsafe_allow_html=True)
     st.markdown("<div class='meta'>PROTECTION VS COST</div>", unsafe_allow_html=True)
