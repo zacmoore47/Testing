@@ -1,0 +1,6 @@
+# Chosen portfolio: US stock core with a Treasury + gold hedge sleeve.
+# VTI = total US stock market, TLT = long-term US Treasuries, GLD = gold.
+ticker,weight
+VTI,70
+TLT,15
+GLD,15
