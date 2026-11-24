@@ -152,7 +152,10 @@ volatility, not correlation.
       all run on live prices. Found and fixed: hedge verdicts treated every crisis equally, so
       trend-following (+24% in 2008, +11% in 2022, but losing in short V-shaped sell-offs) was
       under-rated; added a "big crises" test (portfolio lost >15%, need 2+ such crises)
-- [ ] **S4. Automation:** weekday-evening scheduled run on the Mac (launchd) + desktop notification
+- [~] **S4. Automation (built, awaiting first run on the Mac):** `automation.py install|status|run|uninstall`;
+      launchd weekdays 18:15 local; report + macOS notification (value, day move, regime, alert
+      count); opens the report only when there are alerts. Tested on Linux: schedule file,
+      command and real-data report; launchd and notifications need the Mac
 
 ## Research track (later, optional)
 - Phase 2 combined correlation × volatility regime model

@@ -380,8 +380,35 @@ def render_html(name: str, table: pd.DataFrame, totals: dict, regime: dict | Non
 # ---------------------------------------------------------------------------------------
 
 
+def notify(title: str, message: str) -> bool:
+    """macOS desktop notification (no-op elsewhere). Returns True if one was shown."""
+    import platform
+    import subprocess
+    if platform.system() != "Darwin":
+        log.info("Notification (not on macOS, not shown): %s: %s", title, message)
+        return False
+    esc = lambda x: x.replace("\\", "\\\\").replace('"', '\\"')
+    script = f'display notification "{esc(message)}" with title "{esc(title)}"'
+    try:
+        subprocess.run(["osascript", "-e", script], check=True, timeout=10)
+        return True
+    except Exception as exc:  # notification failure must never break the report
+        log.warning("Could not show notification: %s", exc)
+        return False
+
+
+def summary_line(totals: dict, regime: str | None, alerts: list[str]) -> str:
+    """One line for the notification: value, today's move, regime, alert count."""
+    parts = [f"{_money(totals['value'])} ({_pct(totals['day_change_%'])} today)"]
+    if regime:
+        parts.append(f"market {regime}")
+    parts.append(f"{len(alerts)} alert{'s' if len(alerts) != 1 else ''}" if alerts else "all normal")
+    return " · ".join(parts)
+
+
 def run_report(cfg: pdx.Config, holdings_path: Path, synthetic: bool = False,
-               open_browser: bool = False) -> dict:
+               open_browser: bool = False, notify_user: bool = False,
+               open_on_alert: bool = False) -> dict:
     """Build today's report for a holdings file; returns paths, totals, alerts and regime."""
     df = hd.load_holdings(holdings_path)
     if df.empty:
@@ -417,7 +444,10 @@ def run_report(cfg: pdx.Config, holdings_path: Path, synthetic: bool = False,
     for a in alerts:
         log.info("  ALERT: %s", a)
     log.info("Saved %s (and %s)", out, latest.name)
-    if open_browser:
+    if notify_user:
+        notify(f"Portfolio Lab · {name}", summary_line(totals, regime["level"] if regime else None,
+                                                       alerts))
+    if open_browser or (open_on_alert and alerts):
         import webbrowser
         webbrowser.open(latest.resolve().as_uri())
     return {"path": out, "latest": latest, "html": page, "totals": totals, "alerts": alerts,

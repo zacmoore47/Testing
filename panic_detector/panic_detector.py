@@ -1597,6 +1597,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--report", type=Path, default=None,
                    help="holdings CSV in portfolios/my/: build today's daily report")
     p.add_argument("--open", action="store_true", help="--report: open the report in the browser")
+    p.add_argument("--notify", action="store_true", help="--report: macOS desktop notification")
+    p.add_argument("--open-on-alert", action="store_true",
+                   help="--report: open the report in the browser only when there are alerts")
     p.add_argument("--compare", type=Path, nargs="+", default=None,
                    help="folder(s) or CSV files of candidate portfolios to compare side by side")
     p.add_argument("--portfolio", type=Path, default=None,
@@ -1655,7 +1658,8 @@ def main(argv: list[str] | None = None) -> int:
             self_test(cfg)
         elif args.report:
             from report import run_report  # local module, imported lazily
-            run_report(cfg, args.report, synthetic=args.synthetic, open_browser=args.open)
+            run_report(cfg, args.report, synthetic=args.synthetic, open_browser=args.open,
+                       notify_user=args.notify, open_on_alert=args.open_on_alert)
         elif args.compare:
             from compare import run_compare  # local module, imported lazily
             run_compare(cfg, args.compare, synthetic=args.synthetic)
